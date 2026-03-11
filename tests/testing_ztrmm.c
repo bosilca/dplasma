@@ -34,7 +34,6 @@ int main(int argc, char ** argv)
     /* Set defaults for non argv iparams */
     iparam_default_gemm(iparam);
     iparam_default_ibnbmb(iparam, 0, 200, 200);
-    iparam[IPARAM_NGPUS] = DPLASMA_ERR_NOT_SUPPORTED;
 
     /* Initialize PaRSEC */
     parsec = setup_parsec(argc, argv, iparam);
@@ -57,6 +56,7 @@ int main(int argc, char ** argv)
         dplasma_enum_t side  = dplasmaLeft;
         dplasma_enum_t trans = dplasmaNoTrans;
         dplasma_enum_t diag  = dplasmaUnit;
+        uplo = dplasmaLower; 
 
         PASTE_CODE_FLOPS(FLOPS_ZTRMM, (side, (DagDouble_t)M, (DagDouble_t)N));
 

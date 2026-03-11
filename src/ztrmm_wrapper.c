@@ -99,7 +99,7 @@ dplasma_ztrmm_New( dplasma_enum_t side,  dplasma_enum_t uplo,
                    const parsec_tiled_matrix_t *A,
                    parsec_tiled_matrix_t *B )
 {
-    parsec_taskpool_t *parsec_trmm = NULL;
+    parsec_taskpool_t *parsec_tp = NULL;
     dplasma_data_collection_t * ddc_A = dplasma_wrap_data_collection((parsec_tiled_matrix_t*)A);
     dplasma_data_collection_t * ddc_B = dplasma_wrap_data_collection((parsec_tiled_matrix_t*)B);
 
@@ -124,45 +124,68 @@ dplasma_ztrmm_New( dplasma_enum_t side,  dplasma_enum_t uplo,
     if ( side == dplasmaLeft ) {
         if ( uplo == dplasmaLower ) {
             if ( trans == dplasmaNoTrans ) {
-                parsec_trmm = (parsec_taskpool_t*)parsec_ztrmm_LLN_new(
-                    side, uplo, trans, diag, alpha,
-                    ddc_A, ddc_B);
+                parsec_ztrmm_LLN_taskpool_t* parsec_trmm;
+                parsec_trmm = parsec_ztrmm_LLN_new(
+                        side, uplo, trans, diag, alpha,
+                        ddc_A, ddc_B);
+#if defined(DPLASMA_HAVE_HIP)
+                /* It doesn't cost anything to define these infos if we have HIP but
+                 * don't have GPUs on the current machine, so we do it non-conditionally */
+                parsec_trmm->_g_hip_handles_infokey = parsec_info_lookup(&parsec_per_stream_infos, "DPLASMA::HIP::HANDLES", NULL);
+#else
+                parsec_trmm->_g_hip_handles_infokey = PARSEC_INFO_ID_UNDEFINED;
+#endif
+                parsec_tp = (parsec_taskpool_t*)parsec_trmm;
             } else { /* trans =! dplasmaNoTrans */
-                parsec_trmm = (parsec_taskpool_t*)parsec_ztrmm_LLT_new(
+                parsec_ztrmm_LLT_taskpool_t* parsec_trmm;
+                parsec_trmm = parsec_ztrmm_LLT_new(
                     side, uplo, trans, diag, alpha,
                     ddc_A, ddc_B);
+                parsec_tp = (parsec_taskpool_t*)parsec_trmm;
             }
         } else { /* uplo = dplasmaUpper */
             if ( trans == dplasmaNoTrans ) {
-                parsec_trmm = (parsec_taskpool_t*)parsec_ztrmm_LUN_new(
+                parsec_ztrmm_LUN_taskpool_t* parsec_trmm;
+                parsec_trmm = parsec_ztrmm_LUN_new(
                     side, uplo, trans, diag, alpha,
                     ddc_A, ddc_B);
+                parsec_tp = (parsec_taskpool_t*)parsec_trmm;
             } else { /* trans =! dplasmaNoTrans */
-                parsec_trmm = (parsec_taskpool_t*)parsec_ztrmm_LUT_new(
+                parsec_ztrmm_LUT_taskpool_t* parsec_trmm;
+                parsec_trmm = parsec_ztrmm_LUT_new(
                     side, uplo, trans, diag, alpha,
                     ddc_A, ddc_B);
+                parsec_tp = (parsec_taskpool_t*)parsec_trmm;
             }
         }
     } else { /* side == dplasmaRight */
         if ( uplo == dplasmaLower ) {
             if ( trans == dplasmaNoTrans ) {
-                parsec_trmm = (parsec_taskpool_t*)parsec_ztrmm_RLN_new(
+                parsec_ztrmm_RLN_taskpool_t* parsec_trmm;
+                parsec_trmm = parsec_ztrmm_RLN_new(
                     side, uplo, trans, diag, alpha,
                     ddc_A, ddc_B);
+                parsec_tp = (parsec_taskpool_t*)parsec_trmm;
             } else { /* trans =! dplasmaNoTrans */
-                parsec_trmm = (parsec_taskpool_t*)parsec_ztrmm_RLT_new(
+                parsec_ztrmm_RLT_taskpool_t* parsec_trmm;
+                parsec_trmm = parsec_ztrmm_RLT_new(
                     side, uplo, trans, diag, alpha,
                     ddc_A, ddc_B);
+                parsec_tp = (parsec_taskpool_t*)parsec_trmm;
             }
         } else { /* uplo = dplasmaUpper */
             if ( trans == dplasmaNoTrans ) {
-                parsec_trmm = (parsec_taskpool_t*)parsec_ztrmm_RUN_new(
+                parsec_ztrmm_RUN_taskpool_t* parsec_trmm;
+                parsec_trmm = parsec_ztrmm_RUN_new(
                     side, uplo, trans, diag, alpha,
                     ddc_A, ddc_B);
+                parsec_tp = (parsec_taskpool_t*)parsec_trmm;
             } else { /* trans =! dplasmaNoTrans */
-                parsec_trmm = (parsec_taskpool_t*)parsec_ztrmm_RUT_new(
+                parsec_ztrmm_RUT_taskpool_t* parsec_trmm;
+                parsec_trmm = parsec_ztrmm_RUT_new(
                     side, uplo, trans, diag, alpha,
                     ddc_A, ddc_B);
+                parsec_tp = (parsec_taskpool_t*)parsec_trmm;
             }
         }
     }
@@ -183,7 +206,7 @@ dplasma_ztrmm_New( dplasma_enum_t side,  dplasma_enum_t uplo,
 
     assert(shape == MAX_SHAPES);
 
-    return parsec_trmm;
+    return parsec_tp;
 }
 
 /**

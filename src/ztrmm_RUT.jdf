@@ -8,6 +8,10 @@ extern "C" %{
  * @precisions normal z -> s d c
  *
  */
+#include "dplasma/config.h"
+#if defined(DPLASMA_HAVE_CUDA)
+#include <cublas.h>
+#endif  /* defined(DPLASMA_HAVE_CUDA) */
 #include "dplasmajdf.h"
 #include "parsec/data_dist/matrix/matrix.h"
 
@@ -53,6 +57,8 @@ descA      [type = "const parsec_tiled_matrix_t*" hidden = on default = "((dplas
 
 ddescB     [type = "dplasma_data_collection_t*"]
 descB      [type = "parsec_tiled_matrix_t*" hidden = on default = "((dplasma_data_collection_t*)ddescB)->dc_original" aligned=ddescB]
+
+hip_handles_infokey     [type = "int" hidden = on default = -1 ]
 
 read_A(n, k) [profile = off]
   /* Execution Space */
@@ -153,6 +159,62 @@ loc_C = %{ return LOC(descB, m, n); %}
              -> (k == (descB->nt-1)) ? ddescB(m,n)        [ type        = %{ return ADTT_CP(_f_C, ddescB, loc_C, B_SHAPE); %}
                                                             type_data   = %{ return ADTT_DC(ddescB, loc_C, B_SHAPE, LAPACK); %} ]
              -> (k <  (descB->nt-1)) ? C zgemm(n, m, k+1) /* dep OUT: rely on datacopy dtt for sending */
+
+BODY [type=CUDA]
+{
+#if defined(PRECISION_z) || defined(PRECISION_c)
+    cuDoubleComplex lalpha = make_cuDoubleComplex(creal(alpha), cimag(alpha));
+    cuDoubleComplex lbeta  = make_cuDoubleComplex( 1., 0.);
+#else
+    double lalpha = alpha;
+    double lbeta = 1.0;
+#endif
+    int tempmm = ((m)==(descB->mt-1)) ? (descB->m-(m*descB->mb)) : descB->mb;
+    int tempnn = ((n)==(descB->nt-1)) ? (descB->n-(n*descB->nb)) : descB->nb;
+    int tempkn = ((k)==(descA->nt-1)) ? (descA->n-(k*descA->nb)) : descA->nb;
+    int lda = LDA(ddescB, A);
+    int ldb = LDA(ddescA, B);
+    int ldc = LDA(ddescB, C);
+
+    cublasStatus_t status;
+    cublasSetKernelStream( parsec_body.stream );
+    cublasZgemm( 'N', dplasma_lapack_const(trans),
+                 tempmm, tempnn, tempkn,
+                 lalpha, (cuDoubleComplex*)A, lda,
+                         (cuDoubleComplex*)B, ldb,
+                 lbeta,  (cuDoubleComplex*)C, ldc );
+    status = cublasGetError();
+    PARSEC_CUDA_CHECK_ERROR( "cublasZgemm ", status, {return PARSEC_HOOK_RETURN_ERROR;} );
+}
+END
+
+BODY [type=HIP]
+{
+#if defined(PRECISION_z) || defined(PRECISION_c)
+    hipDoubleComplex lalpha = make_hipDoubleComplex(creal(alpha), cimag(alpha));
+    hipDoubleComplex lbeta  = make_hipDoubleComplex( 1., 0.);
+#else
+    double lalpha = alpha;
+    double lbeta = 1.0;
+#endif
+    int tempmm = ((m)==(descB->mt-1)) ? (descB->m-(m*descB->mb)) : descB->mb;
+    int tempnn = ((n)==(descB->nt-1)) ? (descB->n-(n*descB->nb)) : descB->nb;
+    int tempkn = ((k)==(descA->nt-1)) ? (descA->n-(k*descA->nb)) : descA->nb;
+    int lda = LDA(ddescB, A);
+    int ldb = LDA(ddescA, B);
+    int ldc = LDA(ddescB, C);
+
+    hipblasStatus_t status;
+    dplasma_hip_handles_t *handles = parsec_info_get(&gpu_stream->infos, hip_handles_infokey);
+    assert(NULL != handles);
+    status = hipblasZgemm( handles->hipblas_handle, HIPBLAS_OP_N, dplasma_hipblas_op(trans),
+                 tempmm, tempnn, tempkn,
+                 &lalpha, (hipDoubleComplex*)A, lda,
+                         (hipDoubleComplex*)B, ldb,
+                 &lbeta,  (hipDoubleComplex*)C, ldc );
+    DPLASMA_HIPBLAS_CHECK_ERROR( "hipblasZgemm ", status, {return PARSEC_HOOK_RETURN_ERROR;} );
+}
+END
 
 BODY
 {
