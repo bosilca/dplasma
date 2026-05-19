@@ -2,6 +2,7 @@
  * Copyright (c) 2009-2024 The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
+ * Copyright (c) 2026      NVIDIA Corporation.  All rights reserved.
  *
  * @precisions normal z -> z c d s
  *
@@ -75,10 +76,9 @@ int main(int argc, char ** argv)
 
         PASTE_CODE_FLOPS(FLOPS_ZSYMM, (side, (DagDouble_t)M, (DagDouble_t)N));
 
-        PASTE_CODE_ALLOCATE_MATRIX(dcA, 1,
-            parsec_matrix_sym_block_cyclic, (&dcA, PARSEC_MATRIX_COMPLEX_DOUBLE,
+        PASTE_CODE_ALLOCATE_SYM_MATRIX(dcA, 1, PARSEC_MATRIX_COMPLEX_DOUBLE,
                                        rank, MB, NB, LDA, Am, 0, 0,
-                                       Am, Am, P, nodes/P, uplo));
+                                       Am, Am, P, nodes/P, uplo);
 
         /* matrix generation */
         if(loud > 2) printf("+++ Generate matrices ... ");
@@ -97,7 +97,7 @@ int main(int argc, char ** argv)
 
         dplasma_zsymm_Destruct( PARSEC_zsymm );
 
-        parsec_data_free(dcA.mat);
+        parsec_data_free(DPLASMA_TEST_SYM_MATRIX_MAT(dcA));
         parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcA);
     }
     else
@@ -112,10 +112,9 @@ int main(int argc, char ** argv)
 
             for (u=0; u<2; u++) {
 
-                PASTE_CODE_ALLOCATE_MATRIX(dcA, 1,
-                    parsec_matrix_sym_block_cyclic, (&dcA, PARSEC_MATRIX_COMPLEX_DOUBLE,
+                PASTE_CODE_ALLOCATE_SYM_MATRIX(dcA, 1, PARSEC_MATRIX_COMPLEX_DOUBLE,
                                                rank, MB, NB, LDA, Am, 0, 0,
-                                               Am, Am, P, nodes/P, uplos[u]));
+                                               Am, Am, P, nodes/P, uplos[u]);
 
                 if (loud > 2) printf("Generate matrices ... ");
                 dplasma_zplgsy( parsec, 0., uplos[u], (parsec_tiled_matrix_t *)&dcA, Aseed);
@@ -151,7 +150,7 @@ int main(int argc, char ** argv)
                     printf("***************************************************\n");
                 }
 
-                parsec_data_free(dcA.mat);
+                parsec_data_free(DPLASMA_TEST_SYM_MATRIX_MAT(dcA));
                 parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcA);
             }
         }

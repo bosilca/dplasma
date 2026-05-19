@@ -55,13 +55,12 @@ int main(int argc, char **argv)
     warmup_zpotrf(rank, uplo, random_seed, parsec);
     if(loud > 3) printf("Done\n");
 
-    PASTE_CODE_ALLOCATE_MATRIX(dcA, 1,
-        parsec_matrix_sym_block_cyclic, (&dcA, PARSEC_MATRIX_COMPLEX_DOUBLE,
+    PASTE_CODE_ALLOCATE_SYM_MATRIX(dcA, 1, PARSEC_MATRIX_COMPLEX_DOUBLE,
                                    rank, MB, NB, LDA, N, 0, 0,
-                                   N, N, P, nodes/P, uplo));
+                                   N, N, P, nodes/P, uplo);
 
     /* Initializing dc for dtd */
-    parsec_matrix_sym_block_cyclic_t *__dcA = &dcA;
+    dplasma_test_sym_matrix_t *__dcA = &dcA;
     parsec_dtd_data_collection_init((parsec_data_collection_t *)&dcA);
 
     /* matrix generation */
@@ -333,10 +332,9 @@ int main(int argc, char **argv)
     }
     if( !info && check ) {
         /* Check the factorization */
-        PASTE_CODE_ALLOCATE_MATRIX(dcA0, check,
-            parsec_matrix_sym_block_cyclic, (&dcA0, PARSEC_MATRIX_COMPLEX_DOUBLE,
+        PASTE_CODE_ALLOCATE_SYM_MATRIX(dcA0, check, PARSEC_MATRIX_COMPLEX_DOUBLE,
                                        rank, MB, NB, LDA, N, 0, 0,
-                                       N, N, P, nodes/P, uplo));
+                                       N, N, P, nodes/P, uplo);
         dplasma_zplghe( parsec, (double)(N), uplo,
                         (parsec_tiled_matrix_t *)&dcA0, random_seed);
 
@@ -368,7 +366,7 @@ int main(int argc, char **argv)
                             (parsec_tiled_matrix_t *)&dcX);
 
         /* Cleanup */
-        parsec_data_free(dcA0.mat); dcA0.mat = NULL;
+        parsec_data_free(DPLASMA_TEST_SYM_MATRIX_MAT(dcA0)); DPLASMA_TEST_SYM_MATRIX_MAT(dcA0) = NULL;
         parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcA0 );
         parsec_data_free(dcB.mat); dcB.mat = NULL;
         parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcB );
@@ -380,7 +378,7 @@ int main(int argc, char **argv)
     parsec_dtd_free_arena_datatype(parsec, TILE_FULL);
     parsec_dtd_data_collection_fini( (parsec_data_collection_t *)&dcA );
 
-    parsec_data_free(dcA.mat); dcA.mat = NULL;
+    parsec_data_free(DPLASMA_TEST_SYM_MATRIX_MAT(dcA)); DPLASMA_TEST_SYM_MATRIX_MAT(dcA) = NULL;
     parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcA);
 
     cleanup_parsec(parsec, iparam);

@@ -2,6 +2,7 @@
  * Copyright (c) 2009-2024 The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
+ * Copyright (c) 2026      NVIDIA Corporation.  All rights reserved.
  *
  * @precisions normal z -> s d c
  *
@@ -64,10 +65,9 @@ int main(int argc, char ** argv)
             t1 = dplasmaNoTrans; t2 = dplasmaConjTrans;
         }
 
-        PASTE_CODE_ALLOCATE_MATRIX(dcA, 1,
-            parsec_matrix_sym_block_cyclic, (&dcA, PARSEC_MATRIX_COMPLEX_DOUBLE,
+        PASTE_CODE_ALLOCATE_SYM_MATRIX(dcA, 1, PARSEC_MATRIX_COMPLEX_DOUBLE,
                                        rank, MB, NB, LDA, N, 0, 0,
-                                       N, N, P, nodes/P, uplos[u]));
+                                       N, N, P, nodes/P, uplos[u]);
 
         /*********************************************************************
          *               First Check ( ZPOSV )
@@ -253,7 +253,7 @@ int main(int argc, char ** argv)
             printf("***************************************************\n");
         }
 
-        parsec_data_free(dcA.mat);
+        parsec_data_free(DPLASMA_TEST_SYM_MATRIX_MAT(dcA));
         parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcA);
     }
 

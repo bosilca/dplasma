@@ -2,6 +2,7 @@
  * Copyright (c) 2009-2024 The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
+ * Copyright (c) 2026      NVIDIA Corporation.  All rights reserved.
  *
  * @precisions normal z -> s d c
  *
@@ -39,10 +40,9 @@ int main(int argc, char ** argv)
 
     warmup_zpotrf(rank, uplo, random_seed, parsec);
 
-    PASTE_CODE_ALLOCATE_MATRIX(dcA, 1,
-        parsec_matrix_sym_block_cyclic, (&dcA, PARSEC_MATRIX_COMPLEX_DOUBLE,
+    PASTE_CODE_ALLOCATE_SYM_MATRIX(dcA, 1, PARSEC_MATRIX_COMPLEX_DOUBLE,
                                    rank, MB, NB, LDA, N, 0, 0,
-                                   N, N, P, nodes/P, uplo));
+                                   N, N, P, nodes/P, uplo);
 
     /* Advice data on device */
 #if defined(DPLASMA_HAVE_CUDA) || defined(DPLASMA_HAVE_HIP)
@@ -92,10 +92,9 @@ int main(int argc, char ** argv)
     }
     if( !info && check ) {
         /* Check the factorization */
-        PASTE_CODE_ALLOCATE_MATRIX(dcA0, check,
-            parsec_matrix_sym_block_cyclic, (&dcA0, PARSEC_MATRIX_COMPLEX_DOUBLE,
+        PASTE_CODE_ALLOCATE_SYM_MATRIX(dcA0, check, PARSEC_MATRIX_COMPLEX_DOUBLE,
                                        rank, MB, NB, LDA, N, 0, 0,
-                                       N, N, P, nodes/P, uplo));
+                                       N, N, P, nodes/P, uplo);
         dplasma_zplghe( parsec, (double)(N), uplo,
                         (parsec_tiled_matrix_t *)&dcA0, random_seed);
 
@@ -127,7 +126,7 @@ int main(int argc, char ** argv)
                             (parsec_tiled_matrix_t *)&dcX);
 
         /* Cleanup */
-        parsec_data_free(dcA0.mat); dcA0.mat = NULL;
+        parsec_data_free(DPLASMA_TEST_SYM_MATRIX_MAT(dcA0)); DPLASMA_TEST_SYM_MATRIX_MAT(dcA0) = NULL;
         parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcA0 );
         parsec_data_free(dcB.mat); dcB.mat = NULL;
         parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcB );
@@ -135,7 +134,7 @@ int main(int argc, char ** argv)
         parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcX );
     }
 
-    parsec_data_free(dcA.mat); dcA.mat = NULL;
+    parsec_data_free(DPLASMA_TEST_SYM_MATRIX_MAT(dcA)); DPLASMA_TEST_SYM_MATRIX_MAT(dcA) = NULL;
     parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcA);
 
     cleanup_parsec(parsec, iparam);

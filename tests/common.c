@@ -2,6 +2,7 @@
  * Copyright (c) 2009-2024 The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
+ * Copyright (c) 2026      NVIDIA Corporation.  All rights reserved.
  *
  */
 #include "parsec/runtime.h"
@@ -14,6 +15,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <strings.h>
 #ifdef PARSEC_HAVE_UNISTD_H
 #include <unistd.h>
 #endif
@@ -115,6 +117,7 @@ void print_usage(void)
             " -a --alpha        : Threshold to swith back to QR. (specific to xgetrf_qrf)\n"
             "    --seed         : Set the seed for pseudo-random generator\n"
             "    --mtx          : Set the matrix generator (Default: 0, random)\n"
+            "    --data-dist    : Set the symmetric matrix distribution (2dbc or sbc, default: 2dbc)\n"
             "\n"
             " -y --butlvl       : Level of the Butterfly (starting from 0).\n"
             "\n"
@@ -172,6 +175,7 @@ void print_usage(void)
 }
 
 #define GETOPT_STRING "bc:mo:g::p:P:q:Q:N:M:K:A:B:C:i:t:T:s:S:xXv::hd:ry:V:a:R:G:"
+#define DPLASMA_TEST_OPT_DATA_DIST 256
 
 #if defined(PARSEC_HAVE_GETOPT_LONG)
 static struct option long_options[] =
@@ -245,6 +249,7 @@ static struct option long_options[] =
     {"alpha",       required_argument,  0, 'a'},
     {"seed",        required_argument,  0, 'R'},
     {"mtx",         required_argument,  0, 'G'},
+    {"data-dist",   required_argument,  0, DPLASMA_TEST_OPT_DATA_DIST},
 
     /* Recursive options */
     {"z",           required_argument,  0, 'z'},
@@ -280,6 +285,7 @@ static void read_arguments(int *_argc, char*** _argv, int* iparam)
     /* Default seed */
     iparam[IPARAM_RANDOM_SEED] = 3872;
     iparam[IPARAM_MATRIX_INIT] = dplasmaMatrixRandom;
+    iparam[IPARAM_DATA_DIST] = DPLASMA_TEST_DATA_DIST_2DBC;
     iparam[IPARAM_NRUNS] = 1;
 
     do {
@@ -369,6 +375,14 @@ static void read_arguments(int *_argc, char*** _argv, int* iparam)
 
             case 'R': iparam[IPARAM_RANDOM_SEED]  = atoi(optarg); break;
             case 'G': iparam[IPARAM_MATRIX_INIT]  = atoi(optarg); break;
+            case DPLASMA_TEST_OPT_DATA_DIST:
+                iparam[IPARAM_DATA_DIST] = dplasma_test_parse_data_dist(optarg);
+                if( iparam[IPARAM_DATA_DIST] < 0 ) {
+                    fprintf(stderr, "#XXXXX malformed data distribution value %s (accepted: 2dbc, sbc)\n",
+                            optarg);
+                    exit(2);
+                }
+                break;
 
             case 'd': iparam[IPARAM_QR_DOMINO]    = atoi(optarg) ? 1 : 0; break;
             case 'r': iparam[IPARAM_QR_TSRR]      = 1; break;
@@ -577,7 +591,75 @@ static void print_arguments(int* iparam)
             fprintf(stderr, "#+++++ KP x KQ              : %d x %d\n", iparam[IPARAM_KP], iparam[IPARAM_KQ]);
         if((iparam[IPARAM_HNB] != iparam[IPARAM_NB]) || (iparam[IPARAM_HMB] != iparam[IPARAM_MB]))
             fprintf(stderr, "#+++++ HMB x HNB            : %d x %d\n", iparam[IPARAM_HMB], iparam[IPARAM_HNB]);
+        fprintf(stderr, "#+++++ data distribution    : %s\n",
+                dplasma_test_data_dist_name(iparam[IPARAM_DATA_DIST]));
     }
+}
+
+const char *dplasma_test_data_dist_name(int data_dist)
+{
+    switch(data_dist) {
+    case DPLASMA_TEST_DATA_DIST_2DBC:
+        return "2dbc";
+    case DPLASMA_TEST_DATA_DIST_SBC:
+        return "sbc";
+    default:
+        return "unknown";
+    }
+}
+
+int dplasma_test_parse_data_dist(const char *value)
+{
+    if( 0 == strcasecmp(value, "2dbc") ) {
+        return DPLASMA_TEST_DATA_DIST_2DBC;
+    }
+    if( 0 == strcasecmp(value, "sbc") ) {
+        return DPLASMA_TEST_DATA_DIST_SBC;
+    }
+    return -1;
+}
+
+int dplasma_test_sbc_pattern_size(int nodes)
+{
+    int r;
+
+    for(r = 2; r * (r - 1) / 2 <= nodes; r++) {
+        if( nodes == (r * (r - 1)) / 2 ) {
+            return r;
+        }
+        if( ((r % 2) == 0) && (nodes == (r * r) / 2) ) {
+            return r;
+        }
+    }
+    return -1;
+}
+
+int dplasma_test_sym_matrix_init(dplasma_test_sym_matrix_t *dc,
+                                 int data_dist,
+                                 parsec_matrix_type_t mtype,
+                                 int myrank,
+                                 int mb, int nb, int lm, int ln,
+                                 int i, int j, int m, int n,
+                                 int P, int Q,
+                                 parsec_matrix_uplo_t uplo)
+{
+    if( DPLASMA_TEST_DATA_DIST_SBC == data_dist ) {
+        int nodes = P * Q;
+        int r = dplasma_test_sbc_pattern_size(nodes);
+        if( r < 0 ) {
+            return PARSEC_ERR_BAD_PARAM;
+        }
+        return parsec_matrix_sbc_init(&dc->sbc, mtype, myrank,
+                                      mb, nb, lm, ln, i, j, m, n,
+                                      nodes, r, uplo);
+    }
+    if( DPLASMA_TEST_DATA_DIST_2DBC != data_dist ) {
+        return PARSEC_ERR_BAD_PARAM;
+    }
+
+    parsec_matrix_sym_block_cyclic_init(&dc->sym, mtype, myrank, mb, nb, lm, ln,
+                                        i, j, m, n, P, Q, uplo);
+    return PARSEC_SUCCESS;
 }
 
 
@@ -778,4 +860,3 @@ void cleanup_parsec(parsec_context_t* parsec, int *iparam)
 #endif
     (void)iparam;
 }
-

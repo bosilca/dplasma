@@ -2,6 +2,7 @@
  * Copyright (c) 2009-2024 The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
+ * Copyright (c) 2026      NVIDIA Corporation.  All rights reserved.
  *
  * @precisions normal z -> z c
  *
@@ -15,7 +16,7 @@ static int check_solution( parsec_context_t *parsec, int loud,
                            dplasma_enum_t uplo, dplasma_enum_t trans,
                            dplasma_complex64_t alpha, int Am, int An, int Aseed,
                            dplasma_complex64_t beta,  int M,  int N,  int Cseed,
-                           parsec_matrix_sym_block_cyclic_t *dcCfinal );
+                           parsec_tiled_matrix_t *dcCfinal );
 
 int main(int argc, char ** argv)
 {
@@ -52,10 +53,9 @@ int main(int argc, char ** argv)
                                    rank, MB, NB, LDA, An, 0, 0,
                                    Am, An, P, nodes/P, KP, KQ, IP, JQ));
 
-        PASTE_CODE_ALLOCATE_MATRIX(dcC, 1,
-            parsec_matrix_sym_block_cyclic, (&dcC, PARSEC_MATRIX_COMPLEX_DOUBLE,
+        PASTE_CODE_ALLOCATE_SYM_MATRIX(dcC, 1, PARSEC_MATRIX_COMPLEX_DOUBLE,
                                        rank, MB, NB, LDC, N, 0, 0,
-                                       N, N, P, nodes/P, uplo));
+                                       N, N, P, nodes/P, uplo);
 
         /* matrix generation */
         if(loud > 2) printf("+++ Generate matrices ... ");
@@ -76,7 +76,7 @@ int main(int argc, char ** argv)
 
         parsec_data_free(dcA.mat);
         parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcA);
-        parsec_data_free(dcC.mat);
+        parsec_data_free(DPLASMA_TEST_SYM_MATRIX_MAT(dcC));
         parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcC);
     }
     else
@@ -93,10 +93,9 @@ int main(int argc, char ** argv)
         if (loud > 2) printf("Done\n");
 
         for (u=0; u<2; u++) {
-            PASTE_CODE_ALLOCATE_MATRIX(dcC, 1,
-                parsec_matrix_sym_block_cyclic, (&dcC, PARSEC_MATRIX_COMPLEX_DOUBLE,
+            PASTE_CODE_ALLOCATE_SYM_MATRIX(dcC, 1, PARSEC_MATRIX_COMPLEX_DOUBLE,
                                            rank, MB, NB, LDC, N, 0, 0,
-                                           N, N, P, nodes/P, uplos[u]));
+                                           N, N, P, nodes/P, uplos[u]);
 
             for (t=0; t<2; t++) {
 
@@ -128,7 +127,7 @@ int main(int argc, char ** argv)
                                                uplos[u], trans[t],
                                                alpha, Am, An, Aseed,
                                                beta,  N,  N,  Cseed,
-                                               &dcC);
+                                               (parsec_tiled_matrix_t *)&dcC);
 
                 if ( rank == 0 ) {
                     if (info_solution == 0) {
@@ -146,7 +145,7 @@ int main(int argc, char ** argv)
                 parsec_data_free(dcA.mat);
                 parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcA);
             }
-            parsec_data_free(dcC.mat);
+            parsec_data_free(DPLASMA_TEST_SYM_MATRIX_MAT(dcC));
             parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcC);
         }
 
@@ -171,16 +170,16 @@ static int check_solution( parsec_context_t *parsec, int loud,
                            dplasma_enum_t uplo, dplasma_enum_t trans,
                            dplasma_complex64_t alpha, int Am, int An, int Aseed,
                            dplasma_complex64_t beta,  int M,  int N,  int Cseed,
-                           parsec_matrix_sym_block_cyclic_t *dcCfinal )
+                           parsec_tiled_matrix_t *dcCfinal )
 {
     int info_solution = 1;
     double Anorm, Cinitnorm, Cdplasmanorm, Clapacknorm, Rnorm;
     double eps, result;
-    int MB = dcCfinal->super.mb;
-    int NB = dcCfinal->super.nb;
+    int MB = dcCfinal->mb;
+    int NB = dcCfinal->nb;
     int LDA = Am;
     int LDC = M;
-    int rank  = dcCfinal->super.super.myrank;
+    int rank  = dcCfinal->super.myrank;
 
     eps = LAPACKE_dlamch_work('e');
 
@@ -198,7 +197,7 @@ static int check_solution( parsec_context_t *parsec, int loud,
 
     Anorm        = dplasma_zlange( parsec, dplasmaInfNorm, (parsec_tiled_matrix_t*)&dcA );
     Cinitnorm    = dplasma_zlansy( parsec, dplasmaInfNorm, uplo, (parsec_tiled_matrix_t*)&dcC     );
-    Cdplasmanorm = dplasma_zlansy( parsec, dplasmaInfNorm, uplo, (parsec_tiled_matrix_t*)dcCfinal );
+    Cdplasmanorm = dplasma_zlansy( parsec, dplasmaInfNorm, uplo, dcCfinal );
 
     if ( rank == 0 ) {
         cblas_zsyrk(CblasColMajor,
@@ -211,7 +210,7 @@ static int check_solution( parsec_context_t *parsec, int loud,
     Clapacknorm = dplasma_zlansy( parsec, dplasmaInfNorm, uplo, (parsec_tiled_matrix_t*)&dcC );
 
     dplasma_ztradd( parsec, uplo, dplasmaNoTrans,
-                    -1.0, (parsec_tiled_matrix_t*)dcCfinal,
+                    -1.0, dcCfinal,
                      1.0, (parsec_tiled_matrix_t*)&dcC );
 
     Rnorm = dplasma_zlansy( parsec, dplasmaMaxNorm, uplo, (parsec_tiled_matrix_t*)&dcC );

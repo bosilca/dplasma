@@ -2,6 +2,7 @@
  * Copyright (c) 2009-2024 The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
+ * Copyright (c) 2026      NVIDIA Corporation.  All rights reserved.
  *
  */
 #ifndef _TESTSCOMMON_H
@@ -14,6 +15,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <assert.h>
 /* math libs */
 #include <math.h>
 #include <cblas.h>
@@ -24,6 +26,7 @@
 #include "parsec/utils/debug.h"
 #include "dplasma.h"
 #include "dplasma/types.h"
+#include "parsec/data_dist/matrix/sym_two_dim_rectangle_cyclic.h"
 
 #include "cores/core_blas.h"
 
@@ -70,6 +73,7 @@ enum iparam_t {
   IPARAM_QR_HLVL_SZE,  /* Size of the high level tree           (specific to xgeqrf_param) */
   IPARAM_RANDOM_SEED,  /* Seed for the pseudo-random generators */
   IPARAM_MATRIX_INIT,  /* Matrix generator type */
+  IPARAM_DATA_DIST,    /* Matrix data distribution */
   IPARAM_QR_DOMINO,    /* Enable/disable the domino between the upper and the lower tree (specific to xgeqrf_param) */
   IPARAM_QR_TSRR,      /* Enable/disable the round-robin on TS domain */
   IPARAM_BUT_LEVEL,    /* Butterfly level */
@@ -87,6 +91,43 @@ enum iparam_t {
 #define PARSEC_SCHEDULER_PBQ 6
 #define PARSEC_SCHEDULER_IP  7
 #define PARSEC_SCHEDULER_RND 8
+
+#define DPLASMA_TEST_DATA_DIST_2DBC 0
+#define DPLASMA_TEST_DATA_DIST_SBC  1
+
+const char *dplasma_test_data_dist_name(int data_dist);
+int dplasma_test_parse_data_dist(const char *value);
+int dplasma_test_sbc_pattern_size(int nodes);
+
+typedef union dplasma_test_sym_matrix_u {
+    parsec_tiled_matrix_t super;
+    parsec_matrix_sym_block_cyclic_t sym;
+    parsec_matrix_sbc_t sbc;
+} dplasma_test_sym_matrix_t;
+
+int dplasma_test_sym_matrix_init(dplasma_test_sym_matrix_t *dc,
+                                 int data_dist,
+                                 parsec_matrix_type_t mtype,
+                                 int myrank,
+                                 int mb, int nb, int lm, int ln,
+                                 int i, int j, int m, int n,
+                                 int P, int Q,
+                                 parsec_matrix_uplo_t uplo);
+
+static inline void **dplasma_test_sym_matrix_mat_ptr(dplasma_test_sym_matrix_t *dc)
+{
+    parsec_tiled_matrix_t *tiled = (parsec_tiled_matrix_t *)dc;
+
+    if( tiled->dtype & parsec_matrix_sbc_type ) {
+        return &dc->sbc.mat;
+    }
+
+    assert(tiled->dtype & parsec_matrix_sym_block_cyclic_type);
+    return &dc->sym.mat;
+}
+
+#define DPLASMA_TEST_SYM_MATRIX_MAT(DC) (*dplasma_test_sym_matrix_mat_ptr(&(DC)))
+#define DPLASMA_TEST_SYM_MATRIX_TILED(DC) ((parsec_tiled_matrix_t *)&(DC))
 
 void iparam_default_facto(int* iparam);
 void iparam_default_solve(int* iparam);
@@ -127,12 +168,13 @@ void iparam_default_ibnbmb(int* iparam, int ib, int nb, int mb);
     int scheduler = iparam[IPARAM_SCHEDULER];                           \
     int random_seed = iparam[IPARAM_RANDOM_SEED];                       \
     int matrix_init = iparam[IPARAM_MATRIX_INIT];                       \
+    int data_dist = iparam[IPARAM_DATA_DIST];                           \
     int butterfly_level = iparam[IPARAM_BUT_LEVEL];                     \
     int async = iparam[IPARAM_ASYNC];                                   \
     (void)rank;(void)nodes;(void)cores;(void)gpus;(void)P;(void)Q;(void)M;(void)N;(void)K;(void)NRHS; \
     (void)LDA;(void)LDB;(void)LDC;(void)IB;(void)MB;(void)NB;(void)MT;(void)NT;(void)KT; \
     (void)KP;(void)KQ;(void)IP;(void)JQ;(void)HMB;(void)HNB;(void)check;(void)loud;(void)async; \
-    (void)scheduler;(void)butterfly_level;(void)uplo;(void)check_inv;(void)random_seed;(void)matrix_init;(void)nruns;
+    (void)scheduler;(void)butterfly_level;(void)uplo;(void)check_inv;(void)random_seed;(void)matrix_init;(void)data_dist;(void)nruns;
 
 /* Define a double type which not pass through the precision generation process */
 typedef double DagDouble_t;
@@ -192,6 +234,32 @@ static inline int min(int a, int b) { return a < b ? a : b; }
         parsec_data_collection_set_key((parsec_data_collection_t*)&DC, #DC);          \
     }
 
+/* Paste code to allocate a symmetric matrix using the requested test distribution. */
+#define PASTE_CODE_ALLOCATE_SYM_MATRIX(DC, COND, MTYPE, MYRANK, MB, NB, LM, LN, I, J, M, N, P, Q, UPLO) \
+    PASTE_CODE_ALLOCATE_SYM_MATRIX_DIST(DC, COND, data_dist, MTYPE, MYRANK, MB, NB, LM, LN, I, J, M, N, P, Q, UPLO)
+
+/* Paste code to allocate a symmetric matrix using an explicit test distribution. */
+#define PASTE_CODE_ALLOCATE_SYM_MATRIX_DIST(DC, COND, DIST, MTYPE, MYRANK, MB, NB, LM, LN, I, J, M, N, P, Q, UPLO) \
+    dplasma_test_sym_matrix_t DC;                                  \
+    if(COND) {                                                      \
+        int _dplasma_sym_rc = dplasma_test_sym_matrix_init(&(DC), (DIST), \
+                                                           (MTYPE), (MYRANK), \
+                                                           (MB), (NB), (LM), (LN), \
+                                                           (I), (J), (M), (N), \
+                                                           (P), (Q), (UPLO)); \
+        if( PARSEC_SUCCESS != _dplasma_sym_rc ) {                   \
+            if( 0 == (MYRANK) ) {                                   \
+                fprintf(stderr, "#XXXXX unable to initialize %s symmetric descriptor %s on %d ranks\n", \
+                        dplasma_test_data_dist_name(DIST), #DC, (P) * (Q)); \
+            }                                                       \
+            exit(2);                                                \
+        }                                                           \
+        DPLASMA_TEST_SYM_MATRIX_MAT(DC) = parsec_data_allocate((size_t)DC.super.nb_local_tiles * \
+                                                               (size_t)DC.super.bsiz * \
+                                                               (size_t)parsec_datadist_getsizeoftype(DC.super.mtype)); \
+        parsec_data_collection_set_key((parsec_data_collection_t*)&DC, #DC); \
+    }
+
 #define PASTE_CODE_ENQUEUE_KERNEL(PARSEC, KERNEL, PARAMS)               \
     SYNC_TIME_START();                                                   \
     parsec_taskpool_t* PARSEC_##KERNEL = dplasma_##KERNEL##_New PARAMS;   \
@@ -226,6 +294,7 @@ static inline int min(int a, int b) { return a < b ? a : b; }
     PROFILING_SAVE_iINFO("PARAM_CHECK", iparam[IPARAM_CHECK]);          \
     PROFILING_SAVE_iINFO("PARAM_CHECKINV", iparam[IPARAM_CHECKINV]);    \
     PROFILING_SAVE_iINFO("PARAM_VERBOSE", iparam[IPARAM_VERBOSE]);      \
+    PROFILING_SAVE_iINFO("PARAM_DATA_DIST", iparam[IPARAM_DATA_DIST]);  \
     PROFILING_SAVE_iINFO("PARAM_LOWLVL_TREE", iparam[IPARAM_LOWLVL_TREE]); \
     PROFILING_SAVE_iINFO("PARAM_HIGHLVL_TREE", iparam[IPARAM_HIGHLVL_TREE]); \
     PROFILING_SAVE_iINFO("PARAM_QR_TS_SZE", iparam[IPARAM_QR_TS_SZE]);  \

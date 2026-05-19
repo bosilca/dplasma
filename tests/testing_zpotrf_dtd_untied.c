@@ -118,7 +118,7 @@ insert_task_lower(parsec_execution_stream_t *es, parsec_task_t *this_task)
     /* Parameters passed on to Insert_task() */
     int tempkm, tempmm, ldak, ldam, side, transA_p, transA_g, diag, trans, transB, ldan;
     dplasma_complex64_t alpha_trsm, alpha_herk, beta;
-    parsec_matrix_sym_block_cyclic_t *dcA;
+    dplasma_test_sym_matrix_t *dcA;
 
     int total, *iteration, uplo, *info, m, n, k, count = 0;
 
@@ -127,7 +127,7 @@ insert_task_lower(parsec_execution_stream_t *es, parsec_task_t *this_task)
     parsec_dtd_unpack_args(this_task, &total, &iteration, &uplo,
                            &info, &dcA);
 
-    parsec_matrix_sym_block_cyclic_t *__dcA = dcA;
+    dplasma_test_sym_matrix_t *__dcA = dcA;
 
     side = dplasmaRight;
     transA_p = dplasmaConjTrans;
@@ -229,7 +229,7 @@ insert_task_upper(parsec_execution_stream_t *es, parsec_task_t *this_task)
     /* Parameters passed on to Insert_task() */
     int tempkm, tempmm, ldak, ldam, side, transA_p, transA_g, diag, trans, transB, ldan;
     dplasma_complex64_t alpha_trsm, alpha_herk, beta;
-    parsec_matrix_sym_block_cyclic_t *dcA;
+    dplasma_test_sym_matrix_t *dcA;
 
     int total, *iteration, uplo, *info, m, n, k, count = 0;
 
@@ -237,7 +237,7 @@ insert_task_upper(parsec_execution_stream_t *es, parsec_task_t *this_task)
 
     parsec_dtd_unpack_args(this_task, &total, &iteration, &uplo, &info, &dcA);
 
-    parsec_matrix_sym_block_cyclic_t *__dcA = dcA;
+    dplasma_test_sym_matrix_t *__dcA = dcA;
 
     side = dplasmaLeft;
     transA_p = dplasmaConjTrans;
@@ -355,10 +355,9 @@ int main(int argc, char **argv)
 
     warmup_zpotrf(rank, uplo, random_seed, parsec);
 
-    PASTE_CODE_ALLOCATE_MATRIX(dcA, 1,
-        parsec_matrix_sym_block_cyclic, (&dcA, PARSEC_MATRIX_COMPLEX_DOUBLE,
+    PASTE_CODE_ALLOCATE_SYM_MATRIX(dcA, 1, PARSEC_MATRIX_COMPLEX_DOUBLE,
                                    rank, MB, NB, LDA, N, 0, 0,
-                                   N, N, P, nodes/P, uplo));
+                                   N, N, P, nodes/P, uplo);
 
     parsec_dtd_data_collection_init((parsec_data_collection_t *)&dcA);
 
@@ -398,7 +397,7 @@ int main(int argc, char **argv)
                            sizeof(int),           iteration,           PARSEC_REF,
                            sizeof(int),           &uplo,               PARSEC_VALUE,
                            sizeof(int *),         &info,               PARSEC_REF,
-                           sizeof(parsec_matrix_sym_block_cyclic_t *), &dcA, PARSEC_REF,
+                           sizeof(dplasma_test_sym_matrix_t *), &dcA, PARSEC_REF,
                            PARSEC_DTD_ARG_END );
 
     } else {
@@ -408,7 +407,7 @@ int main(int argc, char **argv)
                            sizeof(int),           iteration,           PARSEC_REF,
                            sizeof(int),           &uplo,               PARSEC_VALUE,
                            sizeof(int *),         &info,               PARSEC_REF,
-                           sizeof(parsec_matrix_sym_block_cyclic_t *), &dcA, PARSEC_REF,
+                           sizeof(dplasma_test_sym_matrix_t *), &dcA, PARSEC_REF,
                            PARSEC_DTD_ARG_END );
 
     }
@@ -434,10 +433,9 @@ int main(int argc, char **argv)
     }
     if( !info && check ) {
         /* Check the factorization */
-        PASTE_CODE_ALLOCATE_MATRIX(dcA0, check,
-            parsec_matrix_sym_block_cyclic, (&dcA0, PARSEC_MATRIX_COMPLEX_DOUBLE,
+        PASTE_CODE_ALLOCATE_SYM_MATRIX(dcA0, check, PARSEC_MATRIX_COMPLEX_DOUBLE,
                                        rank, MB, NB, LDA, N, 0, 0,
-                                       N, N, P, nodes/P, uplo));
+                                       N, N, P, nodes/P, uplo);
         dplasma_zplghe( parsec, (double)(N), uplo,
                         (parsec_tiled_matrix_t *)&dcA0, random_seed);
 
@@ -469,7 +467,7 @@ int main(int argc, char **argv)
                             (parsec_tiled_matrix_t *)&dcX);
 
         /* Cleanup */
-        parsec_data_free(dcA0.mat); dcA0.mat = NULL;
+        parsec_data_free(DPLASMA_TEST_SYM_MATRIX_MAT(dcA0)); DPLASMA_TEST_SYM_MATRIX_MAT(dcA0) = NULL;
         parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcA0 );
         parsec_data_free(dcB.mat); dcB.mat = NULL;
         parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcB );
@@ -479,7 +477,7 @@ int main(int argc, char **argv)
 
     parsec_dtd_free_arena_datatype(parsec, TILE_FULL);
     parsec_dtd_data_collection_fini( (parsec_data_collection_t *)&dcA );
-    parsec_data_free(dcA.mat); dcA.mat = NULL;
+    parsec_data_free(DPLASMA_TEST_SYM_MATRIX_MAT(dcA)); DPLASMA_TEST_SYM_MATRIX_MAT(dcA) = NULL;
     parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcA);
 
     cleanup_parsec(parsec, iparam);
