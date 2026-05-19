@@ -3,6 +3,7 @@ extern "C" %{
  * Copyright (c) 2010-2022 The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
+ * Copyright (c) 2026      NVIDIA Corporation.  All rights reserved.
  *
  * @precisions normal z -> z c
  *
@@ -18,6 +19,43 @@ alpha     [type = "double"]
 descA     [type = "const parsec_tiled_matrix_t *"]
 beta      [type = "double"]
 descC     [type = "parsec_tiled_matrix_t *"]
+taskMapper [type = "parsec_tiled_matrix_t*" hidden = on default = "descC"]
+
+zherk_read_C(n, m) [profile = off]
+  /* Execution Space */
+  n = 0..((taskMapper != descC) ? descC->mt-1 : -1)
+  m = n..(descC->nt-1)
+
+  /* Locality */
+  : descC(n,m)
+
+  RW    C    <- descC(n,m)
+             -> (n == m) ? C zherk(n, 0)
+             -> (n <  m) ? C zgemm(n, m, 0)
+
+BODY
+{
+    /* nothing */
+}
+END
+
+zherk_write_C(n, m) [profile = off]
+  /* Execution Space */
+  n = 0..((taskMapper != descC) ? descC->mt-1 : -1)
+  m = n..(descC->nt-1)
+
+  /* Locality */
+  : descC(n,m)
+
+  RW    C    <- (n == m) ? C zherk(n, descA->nt-1)
+             <- (n <  m) ? C zgemm(n, m, descA->nt-1)
+             -> descC(n,m)
+
+BODY
+{
+    /* nothing */
+}
+END
 
 
 zherk(n, k) [flops = inline_c %{ return FLOPS_ZHERK(CLEAN_NB(descC, n), CLEAN_NB(descA, k)); %}]
@@ -26,13 +64,15 @@ zherk(n, k) [flops = inline_c %{ return FLOPS_ZHERK(CLEAN_NB(descC, n), CLEAN_NB
   k = 0..(descA->nt-1)
 
   /* Locality */
-  : descC(n,n)
+  : taskMapper(n,n)
 
   READ  A    <- A zherk_in_data_A0(n, k)
-  RW    C    <- ((0==k)) ? descC(n,n)
+  RW    C    <- ((0==k) && (taskMapper == descC)) ? descC(n,n)
+             <- ((0==k) && (taskMapper != descC)) ? C zherk_read_C(n,n)
              <- ((k>=1)) ? C zherk(n, k-1)
              -> ((descA->nt>=(2+k))) ? C zherk(n, k+1)
-             -> ((descA->nt==(k+1))) ? descC(n,n)
+             -> ((descA->nt==(k+1)) && (taskMapper == descC)) ? descC(n,n)
+             -> ((descA->nt==(k+1)) && (taskMapper != descC)) ? C zherk_write_C(n,n)
 
 BODY
 {
@@ -76,14 +116,16 @@ zgemm(n, m, k) [flops = inline_c%{ return FLOPS_ZGEMM(CLEAN_NB(descC, n), CLEAN_
   k = 0..(descA->nt-1)
 
   /* Locality */
-  : descC(n,m)
+  : taskMapper(n,m)
 
   READ  A    <- A zgemm_in_data_A0(n, k)
   READ  B    <- B zgemm_in_data_A1(m, k)
-  RW    C    <- ((0==k)) ? descC(n,m)
+  RW    C    <- ((0==k) && (taskMapper == descC)) ? descC(n,m)
+             <- ((0==k) && (taskMapper != descC)) ? C zherk_read_C(n,m)
              <- ((k>=1)) ? C zgemm(n, m, k-1)
              -> ((descA->nt>=(k+2))) ? C zgemm(n, m, k+1)
-             -> ((descA->nt==(k+1))) ? descC(n,m)
+             -> ((descA->nt==(k+1)) && (taskMapper == descC)) ? descC(n,m)
+             -> ((descA->nt==(k+1)) && (taskMapper != descC)) ? C zherk_write_C(n,m)
 
 BODY
 {

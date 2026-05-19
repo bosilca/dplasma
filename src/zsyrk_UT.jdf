@@ -3,6 +3,7 @@ extern "C" %{
  * Copyright (c) 2010-2022 The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
+ * Copyright (c) 2026      NVIDIA Corporation.  All rights reserved.
  *
  * @precisions normal z -> z c d s
  *
@@ -18,6 +19,43 @@ alpha     [type = "dplasma_complex64_t"]
 descA     [type = "const parsec_tiled_matrix_t*"]
 beta      [type = "dplasma_complex64_t"]
 descC     [type = "parsec_tiled_matrix_t*"]
+taskMapper [type = "parsec_tiled_matrix_t*" hidden = on default = "descC"]
+
+zsyrk_read_C(n, m) [profile = off]
+  /* Execution Space */
+  n = 0..((taskMapper != descC) ? descC->mt-1 : -1)
+  m = n..(descC->nt-1)
+
+  /* Locality */
+  : descC(n,m)
+
+  RW    C    <- descC(n,m)
+             -> (n == m) ? C zsyrk(n, 0)
+             -> (n <  m) ? C zgemm(n, m, 0)
+
+BODY
+{
+    /* nothing */
+}
+END
+
+zsyrk_write_C(n, m) [profile = off]
+  /* Execution Space */
+  n = 0..((taskMapper != descC) ? descC->mt-1 : -1)
+  m = n..(descC->nt-1)
+
+  /* Locality */
+  : descC(n,m)
+
+  RW    C    <- (n == m) ? C zsyrk(n, descA->mt-1)
+             <- (n <  m) ? C zgemm(n, m, descA->mt-1)
+             -> descC(n,m)
+
+BODY
+{
+    /* nothing */
+}
+END
 
 
 zsyrk(n, k) [ flops = inline_c %{ return FLOPS_ZSYRK(CLEAN_NB(descC, n), CLEAN_MB(descA, k)); %} ]
@@ -26,13 +64,15 @@ zsyrk(n, k) [ flops = inline_c %{ return FLOPS_ZSYRK(CLEAN_NB(descC, n), CLEAN_M
   k = 0..(descA->mt-1)
 
   /* Locality */
-  : descC(n,n)
+  : taskMapper(n,n)
 
   READ  A    <- A zsyrk_in_data_A0(n, k)
-  RW    C    <- (0 == k) ? descC(n,n)
+  RW    C    <- ((0 == k) && (taskMapper == descC)) ? descC(n,n)
+             <- ((0 == k) && (taskMapper != descC)) ? C zsyrk_read_C(n,n)
              <- (k >= 1) ? C zsyrk(n, k-1)
              -> ((descA->mt-1) >  k) ? C zsyrk(n, k+1)
-             -> ((descA->mt-1) == k) ? descC(n,n)
+             -> (((descA->mt-1) == k) && (taskMapper == descC)) ? descC(n,n)
+             -> (((descA->mt-1) == k) && (taskMapper != descC)) ? C zsyrk_write_C(n,n)
 
 BODY
 {
@@ -75,13 +115,15 @@ zgemm(n, m, k) [ flops = inline_c %{ return FLOPS_ZGEMM(CLEAN_NB(descC, n), CLEA
   k = 0     .. (descA->mt-1)
 
   /* Locality */
-  : descC(n,m)
+  : taskMapper(n,m)
 
   READ  A    <- A zgemm_in_data_A0(n, k)
   READ  B    <- B zgemm_in_data_A1(m, k)
   RW    C    <- ((k>=1)) ? C zgemm(n, m, k-1)
-             <- ((0==k)) ? descC(n,m)
-             -> ((descA->mt==(k+1))) ? descC(n,m)
+             <- ((0==k) && (taskMapper == descC)) ? descC(n,m)
+             <- ((0==k) && (taskMapper != descC)) ? C zsyrk_read_C(n,m)
+             -> ((descA->mt==(k+1)) && (taskMapper == descC)) ? descC(n,m)
+             -> ((descA->mt==(k+1)) && (taskMapper != descC)) ? C zsyrk_write_C(n,m)
              -> ((descA->mt>=(2+k))) ? C zgemm(n, m, k+1)
 
 BODY

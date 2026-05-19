@@ -3,6 +3,7 @@ extern "C" %{
  * Copyright (c) 2010-2022 The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
+ * Copyright (c) 2026      NVIDIA Corporation.  All rights reserved.
  *
  * @precisions normal z -> z c d s
  *
@@ -19,6 +20,43 @@ descA     [type = "const parsec_tiled_matrix_t*"]
 descB     [type = "const parsec_tiled_matrix_t*"]
 beta      [type = "dplasma_complex64_t"]
 descC     [type = "parsec_tiled_matrix_t*"]
+taskMapper [type = "parsec_tiled_matrix_t*" hidden = on default = "descC"]
+
+zsyr2k_read_C(m, n) [profile = off]
+  /* Execution Space */
+  m = 0 .. ((taskMapper != descC) ? descC->mt-1 : -1)
+  n = m .. descC->nt-1
+
+  /* Locality */
+  : descC(m,n)
+
+  RW    C    <- descC(m,n)
+             -> (m == n) ? C zsyr2k(n, 0)
+             -> (m <  n) ? C zgemm_AB(m, n, 0)
+
+BODY
+{
+    /* nothing */
+}
+END
+
+zsyr2k_write_C(m, n) [profile = off]
+  /* Execution Space */
+  m = 0 .. ((taskMapper != descC) ? descC->mt-1 : -1)
+  n = m .. descC->nt-1
+
+  /* Locality */
+  : descC(m,n)
+
+  RW    C    <- (m == n) ? C zsyr2k(n, descA->mt-1)
+             <- (m <  n) ? C zgemm_BA(m, n, descA->mt-1)
+             -> descC(m,n)
+
+BODY
+{
+    /* nothing */
+}
+END
 
 
 zsyr2k(n, k) [ flops = inline_c %{ return FLOPS_ZSYR2K(CLEAN_NB(descC, n), CLEAN_MB(descA, k)); %}]
@@ -27,14 +65,16 @@ zsyr2k(n, k) [ flops = inline_c %{ return FLOPS_ZSYR2K(CLEAN_NB(descC, n), CLEAN
   k = 0 .. descA->mt-1
 
   /* Locality */
-  : descC(n,n)
+  : taskMapper(n,n)
 
   READ  A    <- A in_data_A(k, n)
   READ  B    <- B in_data_B(k, n)
-  RW    C    <- (k == 0) ? descC(n,n)
+  RW    C    <- ((k == 0) && (taskMapper == descC)) ? descC(n,n)
+             <- ((k == 0) && (taskMapper != descC)) ? C zsyr2k_read_C(n,n)
              <- (k >  0) ? C zsyr2k(n, k-1)
              -> (k <  (descA->mt-1)) ? C zsyr2k(n, k+1)
-             -> (k == (descA->mt-1)) ? descC(n,n)
+             -> ((k == (descA->mt-1)) && (taskMapper == descC)) ? descC(n,n)
+             -> ((k == (descA->mt-1)) && (taskMapper != descC)) ? C zsyr2k_write_C(n,n)
 
 BODY
 {
@@ -62,11 +102,12 @@ zgemm_AB(m, n, k) [flops = inline_c%{ return FLOPS_ZGEMM(CLEAN_MB(descC, m), CLE
   k = 0   .. descA->mt-1
 
   /* Locality */
-  : descC(m,n)
+  : taskMapper(m,n)
 
   READ  A    <- A in_data_A(k, m)
   READ  B    <- B in_data_B(k, n)
-  RW    C    <- (k == 0) ? descC(m, n)
+  RW    C    <- ((k == 0) && (taskMapper == descC)) ? descC(m, n)
+             <- ((k == 0) && (taskMapper != descC)) ? C zsyr2k_read_C(m, n)
              <- (k >  0) ? C zgemm_BA(m, n, k-1)
              -> C zgemm_BA(m, n, k)
 
@@ -100,13 +141,14 @@ zgemm_BA(m, n, k) [flops = inline_c%{ return FLOPS_ZGEMM(CLEAN_MB(descC, m), CLE
   k = 0   .. (descA->mt-1)
 
   /* Locality */
-  : descC(m,n)
+  : taskMapper(m,n)
 
   READ  A    <- B in_data_B(k, m)
   READ  B    <- A in_data_A(k, n)
   RW    C    <- C zgemm_AB(m, n, k)
              -> (k <  (descA->mt-1)) ? C zgemm_AB(m, n, k+1)
-             -> (k == (descA->mt-1)) ? descC(m, n)
+             -> ((k == (descA->mt-1)) && (taskMapper == descC)) ? descC(m, n)
+             -> ((k == (descA->mt-1)) && (taskMapper != descC)) ? C zsyr2k_write_C(m, n)
 
 BODY
 {

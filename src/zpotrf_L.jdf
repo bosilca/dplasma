@@ -3,6 +3,7 @@ extern "C" %{
  * Copyright (c) 2010-2024 The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
+ * Copyright (c) 2026      NVIDIA Corporation.  All rights reserved.
  * Copyright (c) 2013      Inria. All rights reserved.
  *
  * @precisions normal z -> s d c
@@ -74,6 +75,7 @@ static int64_t zgemm_time_estimate(const parsec_task_t *task, parsec_device_modu
 uplo       [type = dplasma_enum_t]
 ddescA     [type = "dplasma_data_collection_t*"]
 descA      [type = "parsec_tiled_matrix_t*" hidden = on default = "((dplasma_data_collection_t*)ddescA)->dc_original" aligned=ddescA]
+taskMapper  [type = "parsec_tiled_matrix_t*" hidden = on default = "descA"]
 INFO       [type = "int*"]
 
 PRI_CHANGE    [type = "int" hidden = on default = 0 ]
@@ -83,11 +85,60 @@ smallnb       [type = "int" hidden = on default = "descA->mb" ]
 cuda_handles_infokey    [type = "int" hidden = on default = -1 ]
 cuda_workspaces_infokey [type = "int" hidden = on default = -1 ]
 hip_handles_infokey     [type = "int" hidden = on default = -1 ]
-hip_workspaces_infokey  [type = "int" hidden = on default = -1 ]
+	hip_workspaces_infokey  [type = "int" hidden = on default = -1 ]
 
-/**************************************************
- *               potrf_zpotrf                     *
- **************************************************/
+	/**************************************************
+	 *               matrix staging                   *
+	 **************************************************/
+	potrf_read_A(m, n) [profile = off]
+
+	// Execution space
+	m = 0 .. ((taskMapper != descA) ? descA->mt-1 : -1)
+	n = 0 .. m
+
+	loc_A = %{ return LOC(descA, m, n); %}
+
+	// Locality
+	: descA(m, n)
+
+	RW A <- ddescA(m, n)                         [ type        = %{ return ADTT_READ(ddescA, loc_A, DEFAULT, TILED); %}
+	                                                 type_data   = %{ return ADTT_READ(ddescA, loc_A, DEFAULT, LAPACK); %} ]
+	     -> ((m == n) && (0 == m)) ? T potrf_zpotrf(m)
+	     -> ((m == n) && (0 <  m)) ? T potrf_zherk(0, m)
+	     -> ((m >  n) && (0 == n)) ? C potrf_ztrsm(m, n)
+	     -> ((m >  n) && (0 <  n)) ? C potrf_zgemm(m, n, 0)
+
+	BODY
+	{
+	    /* nothing */
+	}
+	END
+
+	potrf_write_A(m, n) [profile = off]
+
+	// Execution space
+	m = 0 .. ((taskMapper != descA) ? descA->mt-1 : -1)
+	n = 0 .. m
+
+	loc_A = %{ return LOC(descA, m, n); %}
+
+	// Locality
+	: descA(m, n)
+
+	RW A <- (m == n) ? T potrf_zpotrf(m) [ type_remote = %{ return ADTT_DC(ddescA, loc_A, DEFAULT, TILED); %} ]
+	     <- (m >  n) ? C potrf_ztrsm(m, n) [ type_remote = %{ return ADTT_DC(ddescA, loc_A, DEFAULT, TILED); %} ]
+	     -> ddescA(m, n)                 [ type        = %{ return ADTT_CP(_f_A, ddescA, loc_A, DEFAULT); %}
+	                                         type_data   = %{ return ADTT_DC(ddescA, loc_A, DEFAULT, LAPACK); %} ]
+
+	BODY
+	{
+	    /* nothing */
+	}
+	END
+
+	/**************************************************
+	 *               potrf_zpotrf                     *
+	 **************************************************/
 potrf_zpotrf(k) [high_priority = on
                  flops = inline_c %{ return FLOPS_ZPOTRF( CLEAN_MB(descA, k) ); %}
                  time_estimate = zpotrf_time_estimate]
@@ -100,16 +151,18 @@ info = 0  /* For the info in the case of recursive calls */
 loc_T = %{ return LOC(descA, k, k); %}
 
 // Parallel partitioning
-:descA(k, k)
+: taskMapper(k, k)
 
 // Parameters
 
-RW T <- (k == 0) ? ddescA(k, k)            [ type        = %{ return ADTT_READ(ddescA, loc_T, DEFAULT, TILED); %}
-                                             type_data   = %{ return ADTT_READ(ddescA, loc_T, DEFAULT, LAPACK); %} ]
-     <- (k != 0) ? T potrf_zherk(k-1, k)   [ type_remote = %{ return ADTT_DC(ddescA, loc_T, DEFAULT, TILED); %} ]
-     -> T potrf_ztrsm(k+1..descA->mt-1, k) /* dep OUT: rely on datacopy dtt for sending */
-     -> ddescA(k, k)                       [ type        = %{ return ADTT_CP(_f_T, ddescA, loc_T, DEFAULT); %}
-                                             type_data   = %{ return ADTT_DC(ddescA, loc_T, DEFAULT, LAPACK); %} ]
+	RW T <- ((k == 0) && (taskMapper == descA)) ? ddescA(k, k) [ type        = %{ return ADTT_READ(ddescA, loc_T, DEFAULT, TILED); %}
+	                                                             type_data   = %{ return ADTT_READ(ddescA, loc_T, DEFAULT, LAPACK); %} ]
+	     <- ((k == 0) && (taskMapper != descA)) ? A potrf_read_A(k, k) [ type_remote = %{ return ADTT_DC(ddescA, loc_T, DEFAULT, TILED); %} ]
+	     <- (k != 0) ? T potrf_zherk(k-1, k)   [ type_remote = %{ return ADTT_DC(ddescA, loc_T, DEFAULT, TILED); %} ]
+	     -> T potrf_ztrsm(k+1..descA->mt-1, k) /* dep OUT: rely on datacopy dtt for sending */
+	     -> (taskMapper == descA) ? ddescA(k, k) [ type        = %{ return ADTT_CP(_f_T, ddescA, loc_T, DEFAULT); %}
+	                                              type_data   = %{ return ADTT_DC(ddescA, loc_T, DEFAULT, LAPACK); %} ]
+	     -> (taskMapper != descA) ? A potrf_write_A(k, k)
 
 ; (k >= (descA->mt - PRI_CHANGE)) ? (descA->mt - k) * (descA->mt - k) * (descA->mt - k) : PRI_MAX
 
@@ -223,18 +276,20 @@ loc_T = %{ return LOC(descA, k, k); %}
 loc_C = %{ return LOC(descA, m, k); %}
 
 // Parallel partitioning
-: descA(m, k)
+: taskMapper(m, k)
 
 // Parameters
 READ  T <- T potrf_zpotrf(k)                     [ type_remote = %{ return ADTT_DC(ddescA, loc_T, DEFAULT, TILED); %} ]
-RW    C <- (k == 0) ? ddescA(m, k)               [ type        = %{ return ADTT_READ(ddescA, loc_C, DEFAULT, TILED); %}
-                                                   type_data   = %{ return ADTT_READ(ddescA, loc_C, DEFAULT, LAPACK); %} ]
-        <- (k != 0) ? C potrf_zgemm(m, k, k-1)   [ type_remote = %{ return ADTT_DC(ddescA, loc_C, DEFAULT, TILED); %} ]
-        -> A potrf_zherk(k, m)                   /* dep OUT: rely on datacopy dtt for sending */
-        -> A potrf_zgemm(m, k+1..m-1, k)         /* dep OUT: rely on datacopy dtt for sending */
-        -> B potrf_zgemm(m+1..descA->mt-1, m, k) /* dep OUT: rely on datacopy dtt for sending */
-        -> ddescA(m, k)                          [ type        = %{ return ADTT_CP(_f_C, ddescA, loc_C, DEFAULT); %}
-                                                   type_data   = %{ return ADTT_DC(ddescA, loc_C, DEFAULT, LAPACK); %} ]
+	RW    C <- ((k == 0) && (taskMapper == descA)) ? ddescA(m, k) [ type        = %{ return ADTT_READ(ddescA, loc_C, DEFAULT, TILED); %}
+	                                                                type_data   = %{ return ADTT_READ(ddescA, loc_C, DEFAULT, LAPACK); %} ]
+	        <- ((k == 0) && (taskMapper != descA)) ? A potrf_read_A(m, k) [ type_remote = %{ return ADTT_DC(ddescA, loc_C, DEFAULT, TILED); %} ]
+	        <- (k != 0) ? C potrf_zgemm(m, k, k-1)   [ type_remote = %{ return ADTT_DC(ddescA, loc_C, DEFAULT, TILED); %} ]
+	        -> A potrf_zherk(k, m)                   /* dep OUT: rely on datacopy dtt for sending */
+	        -> A potrf_zgemm(m, k+1..m-1, k)         /* dep OUT: rely on datacopy dtt for sending */
+	        -> B potrf_zgemm(m+1..descA->mt-1, m, k) /* dep OUT: rely on datacopy dtt for sending */
+	        -> (taskMapper == descA) ? ddescA(m, k)   [ type        = %{ return ADTT_CP(_f_C, ddescA, loc_C, DEFAULT); %}
+	                                                   type_data   = %{ return ADTT_DC(ddescA, loc_C, DEFAULT, LAPACK); %} ]
+	        -> (taskMapper != descA) ? A potrf_write_A(m, k)
 
 ; (m >= (descA->mt - PRI_CHANGE)) ? (descA->mt - m) * (descA->mt - m) * (descA->mt - m) + 3 * ((2 * descA->mt) - k - m - 1) * (m - k) : PRI_MAX
 
@@ -358,14 +413,15 @@ loc_A = %{ return LOC(descA, m, k); %}
 loc_T = %{ return LOC(descA, m, m); %}
 
 // Parallel partitioning
-: descA(m, m)
+: taskMapper(m, m)
 
 //Parameters
 READ  A <- C potrf_ztrsm(m, k)                [ type_remote = %{ return ADTT_DC(ddescA, loc_A, DEFAULT, TILED); %} ]
-RW    T <- (k == 0)   ? ddescA(m, m)          [ type        = %{ return ADTT_READ(ddescA, loc_T, DEFAULT, TILED); %}
-                                                type_data   = %{ return ADTT_READ(ddescA, loc_T, DEFAULT, LAPACK); %} ]
-        <- (k != 0)   ? T potrf_zherk(k-1, m) [ type_remote = %{ return ADTT_DC(ddescA, loc_T, DEFAULT, TILED); %} ]
-        -> (m == k+1) ? T potrf_zpotrf(m)  : T potrf_zherk(k+1, m) /* dep OUT: rely on datacopy dtt for sending */
+	RW    T <- ((k == 0) && (taskMapper == descA)) ? ddescA(m, m) [ type        = %{ return ADTT_READ(ddescA, loc_T, DEFAULT, TILED); %}
+	                                                                type_data   = %{ return ADTT_READ(ddescA, loc_T, DEFAULT, LAPACK); %} ]
+	        <- ((k == 0) && (taskMapper != descA)) ? A potrf_read_A(m, m) [ type_remote = %{ return ADTT_DC(ddescA, loc_T, DEFAULT, TILED); %} ]
+	        <- (k != 0)   ? T potrf_zherk(k-1, m) [ type_remote = %{ return ADTT_DC(ddescA, loc_T, DEFAULT, TILED); %} ]
+	        -> (m == k+1) ? T potrf_zpotrf(m)  : T potrf_zherk(k+1, m) /* dep OUT: rely on datacopy dtt for sending */
 
 ; (m >= (descA->mt - PRI_CHANGE)) ? (descA->mt - m) * (descA->mt - m) * (descA->mt - m) + 3 * (m - k) : PRI_MAX
 
@@ -480,15 +536,16 @@ loc_B = %{ return LOC(descA, n, k); %}
 loc_C = %{ return LOC(descA, m, n); %}
 
 // Parallel partitioning
-: descA(m, n)
+: taskMapper(m, n)
 
 // Parameters
 READ  A <- C potrf_ztrsm(m, k)                   [ type_remote = %{ return ADTT_DC(ddescA, loc_A, DEFAULT, TILED); %} ]
 READ  B <- C potrf_ztrsm(n, k)                   [ type_remote = %{ return ADTT_DC(ddescA, loc_B, DEFAULT, TILED); %} ]
-RW    C <- (k == 0)   ? ddescA(m, n)             [ type        = %{ return ADTT_READ(ddescA, loc_C, DEFAULT, TILED); %}
-                                                   type_data   = %{ return ADTT_READ(ddescA, loc_C, DEFAULT, LAPACK); %} ]
-        <- (k != 0)   ? C potrf_zgemm(m, n, k-1) [ type_remote = %{ return ADTT_DC(ddescA, loc_C, DEFAULT, TILED); %} ]
-        -> (n == k+1) ? C potrf_ztrsm(m, n) : C potrf_zgemm(m, n, k+1) /* dep OUT: rely on datacopy dtt for sending */
+	RW    C <- ((k == 0) && (taskMapper == descA)) ? ddescA(m, n) [ type        = %{ return ADTT_READ(ddescA, loc_C, DEFAULT, TILED); %}
+	                                                                type_data   = %{ return ADTT_READ(ddescA, loc_C, DEFAULT, LAPACK); %} ]
+	        <- ((k == 0) && (taskMapper != descA)) ? A potrf_read_A(m, n) [ type_remote = %{ return ADTT_DC(ddescA, loc_C, DEFAULT, TILED); %} ]
+	        <- (k != 0)   ? C potrf_zgemm(m, n, k-1) [ type_remote = %{ return ADTT_DC(ddescA, loc_C, DEFAULT, TILED); %} ]
+	        -> (n == k+1) ? C potrf_ztrsm(m, n) : C potrf_zgemm(m, n, k+1) /* dep OUT: rely on datacopy dtt for sending */
 
 ; (m >= (descA->mt - PRI_CHANGE)) ? (descA->mt - m) * (descA->mt - m) * (descA->mt - m) + 3 * ((2 * descA->mt) - m - n - 3) * (m - n) + 6 * (m - k) : PRI_MAX
 
@@ -689,4 +746,3 @@ static void ztrsm_recursive_cb(parsec_taskpool_t* tp, const parsec_recursive_cal
 }
 #endif /* PARSEC_HAVE_DEV_RECURSIVE_SUPPORT */
 %}
-
