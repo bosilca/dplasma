@@ -13,6 +13,8 @@
 #include "dplasmaaux.h"
 #include "parsec/data_dist/matrix/sym_two_dim_rectangle_cyclic.h"
 #include "parsec/data_dist/matrix/two_dim_rectangle_cyclic.h"
+#include "zpotrf_L.h"
+#include "zpotrf_U.h"
 
 static void warmup_zpotrf(int rank, dplasma_enum_t uplo, int random_seed, parsec_context_t *parsec);
 
@@ -43,6 +45,9 @@ int main(int argc, char ** argv)
     PASTE_CODE_ALLOCATE_SYM_MATRIX(dcA, 1, PARSEC_MATRIX_COMPLEX_DOUBLE,
                                    rank, MB, NB, LDA, N, 0, 0,
                                    N, N, P, nodes/P, uplo);
+    PASTE_CODE_INIT_SYM_TASK_MAPPER(taskMapper, 1, PARSEC_MATRIX_COMPLEX_DOUBLE,
+                                    rank, MB, NB, LDA, N, 0, 0,
+                                    N, N, P, nodes/P, uplo);
 
     /* Advice data on device */
 #if defined(DPLASMA_HAVE_CUDA) || defined(DPLASMA_HAVE_HIP)
@@ -65,9 +70,17 @@ int main(int argc, char ** argv)
 
             SYNC_TIME_START();
             parsec_taskpool_t* PARSEC_zpotrf = dplasma_zpotrf_New( uplo, (parsec_tiled_matrix_t*)&dcA, &info );
+            PARSEC_CHECK_ERROR(NULL == PARSEC_zpotrf ? PARSEC_ERROR : PARSEC_SUCCESS, "dplasma_zpotrf_New");
+            if( data_place != data_dist ) {
+                if( uplo == dplasmaLower ) {
+                    ((parsec_zpotrf_L_taskpool_t *)PARSEC_zpotrf)->_g_taskMapper = DPLASMA_TEST_SYM_MATRIX_TILED(taskMapper);
+                } else {
+                    ((parsec_zpotrf_U_taskpool_t *)PARSEC_zpotrf)->_g_taskMapper = DPLASMA_TEST_SYM_MATRIX_TILED(taskMapper);
+                }
+            }
             /* Set the recursive size */
             dplasma_zpotrf_setrecursive( PARSEC_zpotrf, iparam[IPARAM_HMB] );
-            parsec_context_add_taskpool(parsec, PARSEC_zpotrf);
+            PARSEC_CHECK_ERROR(parsec_context_add_taskpool(parsec, PARSEC_zpotrf), "parsec_context_add_taskpool");
             if( loud > 2 ) SYNC_TIME_PRINT(rank, ( "zpotrf\tDAG created\n"));
 
             PASTE_CODE_PROGRESS_KERNEL(parsec, zpotrf);
@@ -78,9 +91,22 @@ int main(int argc, char ** argv)
         }
         else
         {
-            PASTE_CODE_ENQUEUE_PROGRESS_DESTRUCT_KERNEL(parsec, zpotrf,
-                                      ( uplo, (parsec_tiled_matrix_t*)&dcA, &info),
-                                      dplasma_zpotrf_Destruct( PARSEC_zpotrf ));
+            SYNC_TIME_START();
+            parsec_taskpool_t* PARSEC_zpotrf = dplasma_zpotrf_New( uplo, (parsec_tiled_matrix_t*)&dcA, &info );
+            PARSEC_CHECK_ERROR(NULL == PARSEC_zpotrf ? PARSEC_ERROR : PARSEC_SUCCESS, "dplasma_zpotrf_New");
+            if( data_place != data_dist ) {
+                if( uplo == dplasmaLower ) {
+                    ((parsec_zpotrf_L_taskpool_t *)PARSEC_zpotrf)->_g_taskMapper = DPLASMA_TEST_SYM_MATRIX_TILED(taskMapper);
+                } else {
+                    ((parsec_zpotrf_U_taskpool_t *)PARSEC_zpotrf)->_g_taskMapper = DPLASMA_TEST_SYM_MATRIX_TILED(taskMapper);
+                }
+            }
+            PARSEC_CHECK_ERROR(parsec_context_add_taskpool(parsec, PARSEC_zpotrf), "parsec_context_add_taskpool");
+            SYNC_TIME_STOP();
+            double stime_A = sync_time_elapsed;
+            PASTE_CODE_PROGRESS_KERNEL(parsec, zpotrf);
+            dplasma_zpotrf_Destruct( PARSEC_zpotrf );
+            SYNC_TIME_PRINT(rank, ("zpotrf\tDAG creation %f\n", stime_A));
         }
         parsec_devices_reset_load(parsec);
 
@@ -134,6 +160,7 @@ int main(int argc, char ** argv)
         parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcX );
     }
 
+    parsec_tiled_matrix_destroy( DPLASMA_TEST_SYM_MATRIX_TILED(taskMapper) );
     parsec_data_free(DPLASMA_TEST_SYM_MATRIX_MAT(dcA)); DPLASMA_TEST_SYM_MATRIX_MAT(dcA) = NULL;
     parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcA);
 

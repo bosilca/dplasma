@@ -74,6 +74,7 @@ enum iparam_t {
   IPARAM_RANDOM_SEED,  /* Seed for the pseudo-random generators */
   IPARAM_MATRIX_INIT,  /* Matrix generator type */
   IPARAM_DATA_DIST,    /* Matrix data distribution */
+  IPARAM_PLACE_DIST,   /* Task placement distribution */
   IPARAM_QR_DOMINO,    /* Enable/disable the domino between the upper and the lower tree (specific to xgeqrf_param) */
   IPARAM_QR_TSRR,      /* Enable/disable the round-robin on TS domain */
   IPARAM_BUT_LEVEL,    /* Butterfly level */
@@ -92,12 +93,16 @@ enum iparam_t {
 #define PARSEC_SCHEDULER_IP  7
 #define PARSEC_SCHEDULER_RND 8
 
-#define DPLASMA_TEST_DATA_DIST_2DBC 0
-#define DPLASMA_TEST_DATA_DIST_SBC  1
+#define DPLASMA_TEST_DATA_DIST_INVALID -2
+#define DPLASMA_TEST_DATA_DIST_UNSET   -1
+#define DPLASMA_TEST_DATA_DIST_2DBC     0
+#define DPLASMA_TEST_DATA_DIST_SBC      1
+#define DPLASMA_TEST_SKIP_RETURN_CODE  10
 
 const char *dplasma_test_data_dist_name(int data_dist);
 int dplasma_test_parse_data_dist(const char *value);
 int dplasma_test_sbc_pattern_size(int nodes);
+void dplasma_test_print_sbc_world_size_error(const char *desc_name, int P, int Q);
 
 typedef union dplasma_test_sym_matrix_u {
     parsec_tiled_matrix_t super;
@@ -169,12 +174,13 @@ void iparam_default_ibnbmb(int* iparam, int ib, int nb, int mb);
     int random_seed = iparam[IPARAM_RANDOM_SEED];                       \
     int matrix_init = iparam[IPARAM_MATRIX_INIT];                       \
     int data_dist = iparam[IPARAM_DATA_DIST];                           \
+    int data_place = iparam[IPARAM_PLACE_DIST];                         \
     int butterfly_level = iparam[IPARAM_BUT_LEVEL];                     \
     int async = iparam[IPARAM_ASYNC];                                   \
     (void)rank;(void)nodes;(void)cores;(void)gpus;(void)P;(void)Q;(void)M;(void)N;(void)K;(void)NRHS; \
     (void)LDA;(void)LDB;(void)LDC;(void)IB;(void)MB;(void)NB;(void)MT;(void)NT;(void)KT; \
     (void)KP;(void)KQ;(void)IP;(void)JQ;(void)HMB;(void)HNB;(void)check;(void)loud;(void)async; \
-    (void)scheduler;(void)butterfly_level;(void)uplo;(void)check_inv;(void)random_seed;(void)matrix_init;(void)data_dist;(void)nruns;
+    (void)scheduler;(void)butterfly_level;(void)uplo;(void)check_inv;(void)random_seed;(void)matrix_init;(void)data_dist;(void)data_place;(void)nruns;
 
 /* Define a double type which not pass through the precision generation process */
 typedef double DagDouble_t;
@@ -238,8 +244,8 @@ static inline int min(int a, int b) { return a < b ? a : b; }
 #define PASTE_CODE_ALLOCATE_SYM_MATRIX(DC, COND, MTYPE, MYRANK, MB, NB, LM, LN, I, J, M, N, P, Q, UPLO) \
     PASTE_CODE_ALLOCATE_SYM_MATRIX_DIST(DC, COND, data_dist, MTYPE, MYRANK, MB, NB, LM, LN, I, J, M, N, P, Q, UPLO)
 
-/* Paste code to allocate a symmetric matrix using an explicit test distribution. */
-#define PASTE_CODE_ALLOCATE_SYM_MATRIX_DIST(DC, COND, DIST, MTYPE, MYRANK, MB, NB, LM, LN, I, J, M, N, P, Q, UPLO) \
+/* Paste code to initialize a symmetric matrix descriptor using an explicit test distribution. */
+#define PASTE_CODE_INIT_SYM_MATRIX_DIST(DC, COND, DIST, MTYPE, MYRANK, MB, NB, LM, LN, I, J, M, N, P, Q, UPLO) \
     dplasma_test_sym_matrix_t DC;                                  \
     if(COND) {                                                      \
         int _dplasma_sym_rc = dplasma_test_sym_matrix_init(&(DC), (DIST), \
@@ -249,15 +255,35 @@ static inline int min(int a, int b) { return a < b ? a : b; }
                                                            (P), (Q), (UPLO)); \
         if( PARSEC_SUCCESS != _dplasma_sym_rc ) {                   \
             if( 0 == (MYRANK) ) {                                   \
-                fprintf(stderr, "#XXXXX unable to initialize %s symmetric descriptor %s on %d ranks\n", \
-                        dplasma_test_data_dist_name(DIST), #DC, (P) * (Q)); \
+                if( (DPLASMA_TEST_DATA_DIST_SBC == (DIST)) &&       \
+                    (dplasma_test_sbc_pattern_size((P) * (Q)) < 0) ) { \
+                    dplasma_test_print_sbc_world_size_error(#DC, (P), (Q)); \
+                } else {                                            \
+                    fprintf(stderr, "#XXXXX unable to initialize %s symmetric descriptor %s on %d ranks\n", \
+                            dplasma_test_data_dist_name(DIST), #DC, (P) * (Q)); \
+                }                                                   \
+            }                                                       \
+            if( (DPLASMA_TEST_DATA_DIST_SBC == (DIST)) &&           \
+                (dplasma_test_sbc_pattern_size((P) * (Q)) < 0) ) {  \
+                cleanup_parsec(parsec, iparam);                     \
+                return DPLASMA_TEST_SKIP_RETURN_CODE;               \
             }                                                       \
             exit(2);                                                \
         }                                                           \
+        parsec_data_collection_set_key((parsec_data_collection_t*)&DC, #DC); \
+    }
+
+/* Paste code to initialize a symmetric placement-only descriptor. */
+#define PASTE_CODE_INIT_SYM_TASK_MAPPER(DC, COND, MTYPE, MYRANK, MB, NB, LM, LN, I, J, M, N, P, Q, UPLO) \
+    PASTE_CODE_INIT_SYM_MATRIX_DIST(DC, COND, data_place, MTYPE, MYRANK, MB, NB, LM, LN, I, J, M, N, P, Q, UPLO)
+
+/* Paste code to allocate a symmetric matrix using an explicit test distribution. */
+#define PASTE_CODE_ALLOCATE_SYM_MATRIX_DIST(DC, COND, DIST, MTYPE, MYRANK, MB, NB, LM, LN, I, J, M, N, P, Q, UPLO) \
+    PASTE_CODE_INIT_SYM_MATRIX_DIST(DC, COND, DIST, MTYPE, MYRANK, MB, NB, LM, LN, I, J, M, N, P, Q, UPLO) \
+    if(COND) {                                                      \
         DPLASMA_TEST_SYM_MATRIX_MAT(DC) = parsec_data_allocate((size_t)DC.super.nb_local_tiles * \
                                                                (size_t)DC.super.bsiz * \
                                                                (size_t)parsec_datadist_getsizeoftype(DC.super.mtype)); \
-        parsec_data_collection_set_key((parsec_data_collection_t*)&DC, #DC); \
     }
 
 #define PASTE_CODE_ENQUEUE_KERNEL(PARSEC, KERNEL, PARAMS)               \
@@ -295,6 +321,7 @@ static inline int min(int a, int b) { return a < b ? a : b; }
     PROFILING_SAVE_iINFO("PARAM_CHECKINV", iparam[IPARAM_CHECKINV]);    \
     PROFILING_SAVE_iINFO("PARAM_VERBOSE", iparam[IPARAM_VERBOSE]);      \
     PROFILING_SAVE_iINFO("PARAM_DATA_DIST", iparam[IPARAM_DATA_DIST]);  \
+    PROFILING_SAVE_iINFO("PARAM_PLACE_DIST", iparam[IPARAM_PLACE_DIST]); \
     PROFILING_SAVE_iINFO("PARAM_LOWLVL_TREE", iparam[IPARAM_LOWLVL_TREE]); \
     PROFILING_SAVE_iINFO("PARAM_HIGHLVL_TREE", iparam[IPARAM_HIGHLVL_TREE]); \
     PROFILING_SAVE_iINFO("PARAM_QR_TS_SZE", iparam[IPARAM_QR_TS_SZE]);  \

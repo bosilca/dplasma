@@ -11,6 +11,8 @@
 #include "common.h"
 #include "parsec/data_dist/matrix/two_dim_rectangle_cyclic.h"
 #include "parsec/data_dist/matrix/sym_two_dim_rectangle_cyclic.h"
+#include "zsyr2k_LN.h"
+#include "zsyr2k_UN.h"
 
 static int check_solution( parsec_context_t *parsec, int loud,
                            dplasma_enum_t uplo, dplasma_enum_t trans,
@@ -69,6 +71,9 @@ int main(int argc, char ** argv)
         PASTE_CODE_ALLOCATE_SYM_MATRIX(dcC, 1, PARSEC_MATRIX_COMPLEX_DOUBLE,
                                        rank, MB, NB, LDC, N, 0, 0,
                                        N, N, P, nodes/P, uplo);
+        PASTE_CODE_INIT_SYM_TASK_MAPPER(taskMapper, 1, PARSEC_MATRIX_COMPLEX_DOUBLE,
+                                        rank, MB, NB, LDC, N, 0, 0,
+                                        N, N, P, nodes/P, uplo);
 
         /* matrix generation */
         if(loud > 2) printf("+++ Generate matrices ... ");
@@ -78,11 +83,21 @@ int main(int argc, char ** argv)
         if(loud > 2) printf("Done\n");
 
         /* Create PaRSEC */
-        PASTE_CODE_ENQUEUE_KERNEL(parsec, zsyr2k,
-                                  (uplo, trans,
-                                   alpha, (parsec_tiled_matrix_t *)&dcA,
-                                          (parsec_tiled_matrix_t *)&dcB,
-                                   beta,  (parsec_tiled_matrix_t *)&dcC));
+        SYNC_TIME_START();
+        parsec_taskpool_t* PARSEC_zsyr2k = dplasma_zsyr2k_New(uplo, trans,
+                                                               alpha, (parsec_tiled_matrix_t *)&dcA,
+                                                                      (parsec_tiled_matrix_t *)&dcB,
+                                                               beta,  (parsec_tiled_matrix_t *)&dcC);
+        PARSEC_CHECK_ERROR(NULL == PARSEC_zsyr2k ? PARSEC_ERROR : PARSEC_SUCCESS, "dplasma_zsyr2k_New");
+        if( data_place != data_dist ) {
+            if( uplo == dplasmaLower ) {
+                ((parsec_zsyr2k_LN_taskpool_t *)PARSEC_zsyr2k)->_g_taskMapper = DPLASMA_TEST_SYM_MATRIX_TILED(taskMapper);
+            } else {
+                ((parsec_zsyr2k_UN_taskpool_t *)PARSEC_zsyr2k)->_g_taskMapper = DPLASMA_TEST_SYM_MATRIX_TILED(taskMapper);
+            }
+        }
+        PARSEC_CHECK_ERROR(parsec_context_add_taskpool(parsec, PARSEC_zsyr2k), "parsec_context_add_taskpool");
+        if( loud > 2 ) SYNC_TIME_PRINT(rank, ("zsyr2k\tDAG created\n"));
 
         /* lets rock! */
         PASTE_CODE_PROGRESS_KERNEL(parsec, zsyr2k);
@@ -93,6 +108,7 @@ int main(int argc, char ** argv)
         parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcA);
         parsec_data_free(dcB.mat);
         parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcB);
+        parsec_tiled_matrix_destroy( DPLASMA_TEST_SYM_MATRIX_TILED(taskMapper) );
         parsec_data_free(DPLASMA_TEST_SYM_MATRIX_MAT(dcC));
         parsec_tiled_matrix_destroy( (parsec_tiled_matrix_t*)&dcC);
     }

@@ -118,6 +118,7 @@ void print_usage(void)
             "    --seed         : Set the seed for pseudo-random generator\n"
             "    --mtx          : Set the matrix generator (Default: 0, random)\n"
             "    --data-dist    : Set the symmetric matrix distribution (2dbc or sbc, default: 2dbc)\n"
+            "    --place        : Set the task placement distribution (2dbc or sbc, default: data-dist)\n"
             "\n"
             " -y --butlvl       : Level of the Butterfly (starting from 0).\n"
             "\n"
@@ -176,6 +177,7 @@ void print_usage(void)
 
 #define GETOPT_STRING "bc:mo:g::p:P:q:Q:N:M:K:A:B:C:i:t:T:s:S:xXv::hd:ry:V:a:R:G:"
 #define DPLASMA_TEST_OPT_DATA_DIST 256
+#define DPLASMA_TEST_OPT_PLACE 257
 
 #if defined(PARSEC_HAVE_GETOPT_LONG)
 static struct option long_options[] =
@@ -250,6 +252,7 @@ static struct option long_options[] =
     {"seed",        required_argument,  0, 'R'},
     {"mtx",         required_argument,  0, 'G'},
     {"data-dist",   required_argument,  0, DPLASMA_TEST_OPT_DATA_DIST},
+    {"place",       required_argument,  0, DPLASMA_TEST_OPT_PLACE},
 
     /* Recursive options */
     {"z",           required_argument,  0, 'z'},
@@ -286,6 +289,7 @@ static void read_arguments(int *_argc, char*** _argv, int* iparam)
     iparam[IPARAM_RANDOM_SEED] = 3872;
     iparam[IPARAM_MATRIX_INIT] = dplasmaMatrixRandom;
     iparam[IPARAM_DATA_DIST] = DPLASMA_TEST_DATA_DIST_2DBC;
+    iparam[IPARAM_PLACE_DIST] = DPLASMA_TEST_DATA_DIST_UNSET;
     iparam[IPARAM_NRUNS] = 1;
 
     do {
@@ -379,6 +383,14 @@ static void read_arguments(int *_argc, char*** _argv, int* iparam)
                 iparam[IPARAM_DATA_DIST] = dplasma_test_parse_data_dist(optarg);
                 if( iparam[IPARAM_DATA_DIST] < 0 ) {
                     fprintf(stderr, "#XXXXX malformed data distribution value %s (accepted: 2dbc, sbc)\n",
+                            optarg);
+                    exit(2);
+                }
+                break;
+            case DPLASMA_TEST_OPT_PLACE:
+                iparam[IPARAM_PLACE_DIST] = dplasma_test_parse_data_dist(optarg);
+                if( iparam[IPARAM_PLACE_DIST] < 0 ) {
+                    fprintf(stderr, "#XXXXX malformed task placement value %s (accepted: 2dbc, sbc)\n",
                             optarg);
                     exit(2);
                 }
@@ -479,6 +491,9 @@ static void parse_arguments(int *iparam) {
         parsec_setenv_mca_param( "device_cuda_enabled", value, &environ );
         parsec_setenv_mca_param( "device_hip_enabled", value, &environ );
         free(value);
+    }
+    if(iparam[IPARAM_PLACE_DIST] == DPLASMA_TEST_DATA_DIST_UNSET) {
+        iparam[IPARAM_PLACE_DIST] = iparam[IPARAM_DATA_DIST];
     }
 
     /* Check the process grid */
@@ -593,6 +608,8 @@ static void print_arguments(int* iparam)
             fprintf(stderr, "#+++++ HMB x HNB            : %d x %d\n", iparam[IPARAM_HMB], iparam[IPARAM_HNB]);
         fprintf(stderr, "#+++++ data distribution    : %s\n",
                 dplasma_test_data_dist_name(iparam[IPARAM_DATA_DIST]));
+        fprintf(stderr, "#+++++ task placement       : %s\n",
+                dplasma_test_data_dist_name(iparam[IPARAM_PLACE_DIST]));
     }
 }
 
@@ -616,7 +633,7 @@ int dplasma_test_parse_data_dist(const char *value)
     if( 0 == strcasecmp(value, "sbc") ) {
         return DPLASMA_TEST_DATA_DIST_SBC;
     }
-    return -1;
+    return DPLASMA_TEST_DATA_DIST_INVALID;
 }
 
 int dplasma_test_sbc_pattern_size(int nodes)
@@ -632,6 +649,19 @@ int dplasma_test_sbc_pattern_size(int nodes)
         }
     }
     return -1;
+}
+
+void dplasma_test_print_sbc_world_size_error(const char *desc_name, int P, int Q)
+{
+    int nodes = P * Q;
+
+    fprintf(stderr,
+            "#XXXXX TEST SKIPPED: unable to initialize sbc symmetric descriptor %s with %d ranks (P=%d, Q=%d)\n",
+            desc_name, nodes, P, Q);
+    fprintf(stderr,
+            "#XXXXX SBC requires ranks = r*(r-1)/2 for extended SBC (r >= 2), or ranks = r*r/2 for basic SBC (even r only)\n");
+    fprintf(stderr,
+            "#XXXXX Small valid SBC world sizes: 1, 2, 3, 6, 8, 10, 15, 18, 21, 28, 32, 36, 45, 50\n");
 }
 
 int dplasma_test_sym_matrix_init(dplasma_test_sym_matrix_t *dc,

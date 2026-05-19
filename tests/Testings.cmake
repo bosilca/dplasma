@@ -2,6 +2,7 @@
 # Copyright (c) 2010-2024 The University of Tennessee and The University
 #                         of Tennessee Research Foundation.  All rights
 #                         reserved.
+# Copyright (c) 2026      NVIDIA Corporation.  All rights reserved.
 #
 #
 # A more compact representation of the DPLASMA tests. We can compose any number
@@ -17,6 +18,7 @@ set(PTG2DTD "ptg2dtd")
 set(PTG2DTD_OPTIONS "--;--mca;mca_pins;ptg_to_dtd")
 set(OPTIONS "-x;-v=5")
 #set(OPTIONS "")
+set(DPLASMA_TEST_SKIP_RETURN_CODE 10)
 
 macro(dplasma_add_test m_nameradix m_dependsradix m_types)
   foreach (m_type "${m_types}")
@@ -56,7 +58,8 @@ macro(dplasma_add_test m_nameradix m_dependsradix m_types)
     # enable devices only in tests that explicitely require them
     # restrict memory use for oversubscribed runners
     set_tests_properties(dplasma_${prec}${m_nameradix}_${m_suffix} PROPERTIES ENVIRONMENT
-      "PARSEC_MCA_device_cuda_enabled=0;PARSEC_MCA_device_hip_enabled=0;PARSEC_MCA_device_level_zero_enabled=0;PARSEC_MCA_device_cuda_memory_use=10;PARSEC_MCA_device_hip_memory_use=10;PARSEC_MCA_device_level_zero_memory_use=10")
+      "PARSEC_MCA_device_cuda_enabled=0;PARSEC_MCA_device_hip_enabled=0;PARSEC_MCA_device_level_zero_enabled=0;PARSEC_MCA_device_cuda_memory_use=10;PARSEC_MCA_device_hip_memory_use=10;PARSEC_MCA_device_level_zero_memory_use=10"
+      SKIP_RETURN_CODE ${DPLASMA_TEST_SKIP_RETURN_CODE})
   endforeach()
 endmacro()
 
@@ -188,6 +191,11 @@ endforeach()
 #
 if( MPI_C_FOUND )
   set(PROCS 4)
+  # SBC requires P*Q = r*(r-1)/2 for extended SBC or r*r/2 for even-r basic SBC.
+  # Use 3 ranks here because it is the smallest non-degenerate extended SBC case
+  # (r=3 gives 3 ranks), while the default 4-rank MPI test size is not valid SBC.
+  set(SBC_PROCS 3)
+  set(SBC_OPTIONS -v=1 -P ${SBC_PROCS} -Q 1)
   set(CORES "")
   #set(CORES "-c;1")
 
@@ -210,14 +218,30 @@ if( MPI_C_FOUND )
     dplasma_add_test(symm               lange mpi:${PROCS} -M 106 -N 283 -K 97 -t 19 ${OPTIONS})
     dplasma_add_test(syrk               lange mpi:${PROCS} -M 287 -N 283 -K 97 -t 19 ${OPTIONS})
     dplasma_add_test(syr2k              lange mpi:${PROCS} -M 287 -N 283 -K 97 -t 19 ${OPTIONS})
+    dplasma_add_test(syrk               lange data_2dbc_place_sbc_mpi:${SBC_PROCS} -N 128 -K 64 -t 32 -T 32 -u L ${SBC_OPTIONS} --data-dist=2dbc --place=sbc)
+    dplasma_add_test(syrk               lange data_sbc_place_2dbc_mpi:${SBC_PROCS} -N 128 -K 64 -t 32 -T 32 -u L ${SBC_OPTIONS} --data-dist=sbc --place=2dbc)
+    dplasma_add_test(syrk               lange data_sbc_place_sbc_mpi:${SBC_PROCS} -N 128 -K 64 -t 32 -T 32 -u L ${SBC_OPTIONS} --data-dist=sbc --place=sbc)
+    dplasma_add_test(syr2k              lange data_2dbc_place_sbc_mpi:${SBC_PROCS} -N 128 -K 64 -t 32 -T 32 -u L ${SBC_OPTIONS} --data-dist=2dbc --place=sbc)
+    dplasma_add_test(syr2k              lange data_sbc_place_2dbc_mpi:${SBC_PROCS} -N 128 -K 64 -t 32 -T 32 -u L ${SBC_OPTIONS} --data-dist=sbc --place=2dbc)
+    dplasma_add_test(syr2k              lange data_sbc_place_sbc_mpi:${SBC_PROCS} -N 128 -K 64 -t 32 -T 32 -u L ${SBC_OPTIONS} --data-dist=sbc --place=sbc)
     if ( ${prec} STREQUAL "c" OR ${prec} STREQUAL "z" )
       dplasma_add_test(hemm             lange mpi:${PROCS} -M 106 -N 283 -K 97 -t 19 ${OPTIONS})
       dplasma_add_test(herk             lange mpi:${PROCS} -M 287 -N 283 -K 97 -t 19 ${OPTIONS})
       dplasma_add_test(her2k            lange mpi:${PROCS} -M 287 -N 283 -K 97 -t 19 ${OPTIONS})
+      dplasma_add_test(herk             lange data_2dbc_place_sbc_mpi:${SBC_PROCS} -N 128 -K 64 -t 32 -T 32 -u L ${SBC_OPTIONS} --data-dist=2dbc --place=sbc)
+      dplasma_add_test(herk             lange data_sbc_place_2dbc_mpi:${SBC_PROCS} -N 128 -K 64 -t 32 -T 32 -u L ${SBC_OPTIONS} --data-dist=sbc --place=2dbc)
+      dplasma_add_test(herk             lange data_sbc_place_sbc_mpi:${SBC_PROCS} -N 128 -K 64 -t 32 -T 32 -u L ${SBC_OPTIONS} --data-dist=sbc --place=sbc)
+      dplasma_add_test(her2k            lange data_2dbc_place_sbc_mpi:${SBC_PROCS} -N 128 -K 64 -t 32 -T 32 -u L ${SBC_OPTIONS} --data-dist=2dbc --place=sbc)
+      dplasma_add_test(her2k            lange data_sbc_place_2dbc_mpi:${SBC_PROCS} -N 128 -K 64 -t 32 -T 32 -u L ${SBC_OPTIONS} --data-dist=sbc --place=2dbc)
+      dplasma_add_test(her2k            lange data_sbc_place_sbc_mpi:${SBC_PROCS} -N 128 -K 64 -t 32 -T 32 -u L ${SBC_OPTIONS} --data-dist=sbc --place=sbc)
     endif()
 
     # Cholesky
     dplasma_add_test(potrf              gemm mpi:${PROCS} -N 378 -t 19        ${OPTIONS})
+    dplasma_add_test(potrf              gemm data_2dbc_place_sbc_mpi:${SBC_PROCS} -N 128 -t 32 -T 32 -u L ${SBC_OPTIONS} --data-dist=2dbc --place=sbc)
+    dplasma_add_test(potrf              gemm data_sbc_place_2dbc_mpi:${SBC_PROCS} -N 128 -t 32 -T 32 -u L ${SBC_OPTIONS} --data-dist=sbc --place=2dbc)
+    dplasma_add_test(potrf              gemm data_sbc_place_sbc_mpi:${SBC_PROCS} -N 128 -t 32 -T 32 -u L ${SBC_OPTIONS} --data-dist=sbc --place=sbc)
+    dplasma_add_test(poinv              potrf data_sbc_place_sbc_mpi:${SBC_PROCS} -N 128 -t 32 -T 32 -u L -x ${SBC_OPTIONS} --data-dist=sbc --place=sbc)
     dplasma_add_test(potrf_dtd          gemm mpi:${PROCS} -N 378 -t 19        ${OPTIONS})
     dplasma_add_test(potrf_dtd_untied   gemm mpi:${PROCS} -N 378 -t 19        ${OPTIONS})
     dplasma_add_test(posv               gemm mpi:${PROCS} -N 457 -t 19 -K 367 ${OPTIONS})
@@ -298,4 +322,3 @@ if( MPI_C_FOUND )
   endforeach()
 
 endif( MPI_C_FOUND )
-
