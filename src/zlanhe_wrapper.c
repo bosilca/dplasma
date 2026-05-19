@@ -3,6 +3,7 @@
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
  * Copyright (c) 2013      Inria. All rights reserved.
+ * Copyright (c) 2026      NVIDIA Corporation.  All rights reserved.
  *
  * @precisions normal z -> z c
  *
@@ -12,7 +13,6 @@
 #include "dplasma/types.h"
 #include "dplasmaaux.h"
 #include "parsec/data_dist/matrix/two_dim_rectangle_cyclic.h"
-#include "parsec/data_dist/matrix/sym_two_dim_rectangle_cyclic.h"
 
 #include "zlansy.h"
 
@@ -60,8 +60,8 @@ dplasma_zlanhe_fake_data_of(parsec_data_collection_t *mat, ...)
  *
  * @param[in] A
  *          The descriptor of the hermitian matrix A.
- *          Must be a two_dim_rectangle_cyclic or sym_two_dim_rectangle_cyclic
- *          matrix
+ *          Must be a two_dim_rectangle_cyclic, sym_two_dim_rectangle_cyclic,
+ *          or sbc matrix.
  *
  * @param[out] result
  *          The norm described above. Might not be set when the function returns.
@@ -100,15 +100,10 @@ dplasma_zlanhe_New( dplasma_enum_t norm,
         dplasma_error("dplasma_zlanhe", "illegal value of uplo");
         return NULL;
     }
-    if ( !(A->dtype & ( parsec_matrix_block_cyclic_type | parsec_matrix_sym_block_cyclic_type)) ) {
+    if ( 0 != dplasma_aux_get_2d_grid(A, &P, &Q, NULL, NULL, &IP, &JQ) ) {
         dplasma_error("dplasma_zlanhe", "illegal type of descriptor for A");
         return NULL;
     }
-
-    P = ((parsec_matrix_sym_block_cyclic_t*)A)->grid.rows;
-    Q = ((parsec_matrix_sym_block_cyclic_t*)A)->grid.cols;
-    IP = ((parsec_matrix_block_cyclic_t*)A)->grid.ip;
-    JQ = ((parsec_matrix_block_cyclic_t*)A)->grid.jq;
 
     /* Warning: Pb with smb/snb when mt/nt lower than P/Q */
     switch( norm ) {
@@ -241,8 +236,8 @@ dplasma_zlanhe_Destruct( parsec_taskpool_t *tp )
  *
  * @param[in] A
  *          The descriptor of the hermitian matrix A.
- *          Must be a two_dim_rectangle_cyclic or sym_two_dim_rectangle_cyclic
- *          matrix
+ *          Must be a two_dim_rectangle_cyclic, sym_two_dim_rectangle_cyclic,
+ *          or sbc matrix.
  *
 *******************************************************************************
  *
@@ -274,7 +269,7 @@ dplasma_zlanhe( parsec_context_t *parsec,
         dplasma_error("dplasma_zlanhe", "illegal value of uplo");
         return -3.;
     }
-    if ( !(A->dtype & ( parsec_matrix_block_cyclic_type | parsec_matrix_sym_block_cyclic_type)) ) {
+    if ( 0 != dplasma_aux_get_2d_grid(A, NULL, NULL, NULL, NULL, NULL, NULL) ) {
         dplasma_error("dplasma_zlanhe", "illegal type of descriptor for A");
         return -4.;
     }
@@ -294,4 +289,3 @@ dplasma_zlanhe( parsec_context_t *parsec,
 
     return result;
 }
-

@@ -3,6 +3,7 @@
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
  * Copyright (c) 2013      Inria. All rights reserved.
+ * Copyright (c) 2026      NVIDIA Corporation.  All rights reserved.
  *
  */
 
@@ -46,6 +47,30 @@ int dplasma_aux_get_priority_limit( char* function, const parsec_tiled_matrix_t*
  *          the value to use for the look ahead in SUMMA.
  */
 int dplasma_aux_getGEMMLookahead( parsec_tiled_matrix_t *A );
+
+/**
+ * Returns the 2D process-grid metadata of a tiled matrix descriptor.
+ *
+ * @details
+ *   This helper centralizes access to the matrix descriptors accepted by
+ *   DPLASMA wrappers when they need to create an auxiliary 2D block-cyclic
+ *   descriptor over the same set of ranks as an input matrix.
+ *
+ *   The supported descriptors are parsec_matrix_block_cyclic_t,
+ *   parsec_matrix_sym_block_cyclic_t, and parsec_matrix_sbc_t.
+ *
+ *  @param[IN]  A   The tiled matrix descriptor.
+ *  @param[OUT] P   The number of rows in the compatible 2DBC grid.
+ *  @param[OUT] Q   The number of columns in the compatible 2DBC grid.
+ *  @param[OUT] KP  The row repetition in the compatible 2DBC grid.
+ *  @param[OUT] KQ  The column repetition in the compatible 2DBC grid.
+ *  @param[OUT] IP  The row offset in the compatible 2DBC grid.
+ *  @param[OUT] JQ  The column offset in the compatible 2DBC grid.
+ *
+ *  @return 0 if the descriptor has supported grid metadata, -1 otherwise.
+ */
+int dplasma_aux_get_2d_grid(const parsec_tiled_matrix_t *A,
+                            int *P, int *Q, int *KP, int *KQ, int *IP, int *JQ);
 
 /**
  *  Create a dplasma-specific communicator

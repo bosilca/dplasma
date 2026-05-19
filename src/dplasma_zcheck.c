@@ -3,6 +3,7 @@
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
  * Copyright (c) 2013      Inria. All rights reserved.
+ * Copyright (c) 2026      NVIDIA Corporation.  All rights reserved.
  *
  * @precisions normal z -> s d c
  *
@@ -10,6 +11,7 @@
 #include "dplasma.h"
 #include <math.h>
 #include <lapacke.h>
+#include "dplasmaaux.h"
 #include "parsec/data_dist/matrix/two_dim_rectangle_cyclic.h"
 
 /**
@@ -65,8 +67,8 @@ int check_zpotrf( parsec_context_t *parsec, int loud,
                   parsec_tiled_matrix_t *A,
                   parsec_tiled_matrix_t *A0 )
 {
-    parsec_matrix_block_cyclic_t *twodA = (parsec_matrix_block_cyclic_t *)A0;
     parsec_matrix_block_cyclic_t LLt;
+    int P, Q, KP, KQ, IP, JQ;
     int info_factorization;
     double Rnorm = 0.0;
     double Anorm = 0.0;
@@ -76,10 +78,15 @@ int check_zpotrf( parsec_context_t *parsec, int loud,
     double eps = LAPACKE_dlamch_work('e');
     dplasma_enum_t side;
 
+    if( 0 != dplasma_aux_get_2d_grid(A0, &P, &Q, &KP, &KQ, &IP, &JQ) ) {
+        dplasma_error("check_zpotrf", "illegal type of descriptor for A0");
+        return 1;
+    }
+
     parsec_matrix_block_cyclic_init(&LLt, PARSEC_MATRIX_COMPLEX_DOUBLE, PARSEC_MATRIX_TILE,
-                              twodA->grid.rank,
+                              A0->super.myrank,
                               A->mb, A->nb, M, N, 0, 0,
-                              M, N, twodA->grid.rows, twodA->grid.cols, twodA->grid.krows, twodA->grid.kcols, twodA->grid.ip, twodA->grid.jq);
+                              M, N, P, Q, KP, KQ, IP, JQ);
 
     LLt.mat = parsec_data_allocate((size_t)LLt.super.nb_local_tiles *
                                   (size_t)LLt.super.bsiz *
@@ -266,18 +273,23 @@ int check_zpoinv( parsec_context_t *parsec, int loud,
                   parsec_tiled_matrix_t *A,
                   parsec_tiled_matrix_t *Ainv )
 {
-    parsec_matrix_block_cyclic_t *twodA = (parsec_matrix_block_cyclic_t *)A;
     parsec_matrix_block_cyclic_t Id;
+    int P, Q, KP, KQ, IP, JQ;
     int info_solution;
     double Anorm, Ainvnorm, Rnorm;
     double eps, result;
 
     eps = LAPACKE_dlamch_work('e');
 
+    if( 0 != dplasma_aux_get_2d_grid(A, &P, &Q, &KP, &KQ, &IP, &JQ) ) {
+        dplasma_error("check_zpoinv", "illegal type of descriptor for A");
+        return 1;
+    }
+
     parsec_matrix_block_cyclic_init(&Id, PARSEC_MATRIX_COMPLEX_DOUBLE, PARSEC_MATRIX_TILE,
-                               twodA->grid.rank,
+                               A->super.myrank,
                                A->mb, A->nb, A->n, A->n, 0, 0,
-                               A->n, A->n, twodA->grid.rows, twodA->grid.cols, twodA->grid.krows, twodA->grid.kcols, twodA->grid.ip, twodA->grid.jq);
+                               A->n, A->n, P, Q, KP, KQ, IP, JQ);
 
     Id.mat = parsec_data_allocate((size_t)Id.super.nb_local_tiles *
                                   (size_t)Id.super.bsiz *

@@ -3,6 +3,7 @@
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
  * Copyright (c) 2013      Inria. All rights reserved.
+ * Copyright (c) 2026      NVIDIA Corporation.  All rights reserved.
  *
  * @precisions normal z -> c d s
  *
@@ -11,7 +12,7 @@
 #include <lapacke.h>
 #include "dplasma.h"
 #include "dplasma/types.h"
-#include "parsec/data_dist/matrix/sym_two_dim_rectangle_cyclic.h"
+#include "dplasmaaux.h"
 #include "parsec/data_dist/matrix/two_dim_rectangle_cyclic.h"
 
 /**
@@ -142,17 +143,7 @@ dplasma_zlatms( parsec_context_t *parsec,
     mt    = A->mt;
     nt    = A->nt;
 
-    if ( A->dtype & parsec_matrix_block_cyclic_type ) {
-        P = ((parsec_matrix_block_cyclic_t*)A)->grid.rows;
-        IP = ((parsec_matrix_block_cyclic_t*)A)->grid.ip;
-        JQ = ((parsec_matrix_block_cyclic_t*)A)->grid.jq;
-    }
-    else if ( A->dtype & parsec_matrix_sym_block_cyclic_type ) {
-        P = ((parsec_matrix_sym_block_cyclic_t*)A)->grid.rows;
-        IP = ((parsec_matrix_sym_block_cyclic_t*)A)->grid.ip;
-        JQ = ((parsec_matrix_sym_block_cyclic_t*)A)->grid.jq;
-    }
-    else {
+    if ( 0 != dplasma_aux_get_2d_grid(A, &P, NULL, NULL, NULL, &IP, &JQ) ) {
         P = 1;
         IP = 0;
         JQ = 0;

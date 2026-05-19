@@ -2,6 +2,7 @@
  * Copyright (c) 2010-2022 The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
+ * Copyright (c) 2026      NVIDIA Corporation.  All rights reserved.
  *
  */
 #ifndef _DPLASMA_H_
@@ -12,6 +13,7 @@
 #include "parsec/data_dist/matrix/matrix.h"
 #include "parsec/data_distribution.h"
 #include "parsec/data_dist/matrix/two_dim_rectangle_cyclic.h"
+#include "parsec/data_dist/matrix/sbc.h"
 
 #define DPLASMA_VERSION_MAJOR @DPLASMA_VERSION_MAJOR@
 #define DPLASMA_VERSION_MINOR @DPLASMA_VERSION_MINOR@

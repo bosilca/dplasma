@@ -3,6 +3,7 @@
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
  * Copyright (c) 2013      Inria. All rights reserved.
+ * Copyright (c) 2026      NVIDIA Corporation.  All rights reserved.
  *
  */
 
@@ -13,6 +14,7 @@
 #include <string.h>
 #include "dplasmaaux.h"
 #include "parsec/utils/show_help.h"
+#include "parsec/data_dist/matrix/sbc.h"
 #include "parsec/data_dist/matrix/sym_two_dim_rectangle_cyclic.h"
 #include "parsec/data_dist/matrix/two_dim_rectangle_cyclic.h"
 
@@ -111,6 +113,62 @@ dplasma_aux_getGEMMLookahead( parsec_tiled_matrix_t *A )
     }
 }
 
+int
+dplasma_aux_get_2d_grid(const parsec_tiled_matrix_t *A,
+                        int *P, int *Q, int *KP, int *KQ, int *IP, int *JQ)
+{
+    if( NULL == A ) {
+        return -1;
+    }
+
+    if( A->dtype & parsec_matrix_block_cyclic_type ) {
+        const parsec_matrix_block_cyclic_t *twod =
+            (const parsec_matrix_block_cyclic_t *)A;
+        if( NULL != P  ) *P  = twod->grid.rows;
+        if( NULL != Q  ) *Q  = twod->grid.cols;
+        if( NULL != KP ) *KP = twod->grid.krows;
+        if( NULL != KQ ) *KQ = twod->grid.kcols;
+        if( NULL != IP ) *IP = twod->grid.ip;
+        if( NULL != JQ ) *JQ = twod->grid.jq;
+        return 0;
+    }
+
+    if( A->dtype & parsec_matrix_sym_block_cyclic_type ) {
+        const parsec_matrix_sym_block_cyclic_t *sym =
+            (const parsec_matrix_sym_block_cyclic_t *)A;
+        if( NULL != P  ) *P  = sym->grid.rows;
+        if( NULL != Q  ) *Q  = sym->grid.cols;
+        if( NULL != KP ) *KP = sym->grid.krows;
+        if( NULL != KQ ) *KQ = sym->grid.kcols;
+        if( NULL != IP ) *IP = sym->grid.ip;
+        if( NULL != JQ ) *JQ = sym->grid.jq;
+        return 0;
+    }
+
+    if( A->dtype & parsec_matrix_sbc_type ) {
+        const parsec_matrix_sbc_t *sbc = (const parsec_matrix_sbc_t *)A;
+        int nodes = sbc->super.super.nodes;
+        int grid_p = 1;
+        int p;
+
+        for(p = 1; p * p <= nodes; p++) {
+            if( 0 == (nodes % p) ) {
+                grid_p = p;
+            }
+        }
+
+        if( NULL != P  ) *P  = grid_p;
+        if( NULL != Q  ) *Q  = nodes / grid_p;
+        if( NULL != KP ) *KP = 1;
+        if( NULL != KQ ) *KQ = 1;
+        if( NULL != IP ) *IP = 0;
+        if( NULL != JQ ) *JQ = 0;
+        return 0;
+    }
+
+    return -1;
+}
+
 #if defined(DPLASMA_HAVE_CUDA) || defined(DPLASMA_HAVE_HIP)
 
 /** Find all GPUs
@@ -191,12 +249,14 @@ int dplasma_advise_data_on_device(parsec_context_t *parsec,
             args->gpu_rows = args->nb_gpu_devices/args->gpu_cols;
         }
 
-        if(dplasmaUpper == uplo || dplasmaLower == uplo) {
-            args->grid_rows = ((parsec_matrix_sym_block_cyclic_t *)A)->grid.rows;
-            args->grid_cols = ((parsec_matrix_sym_block_cyclic_t *)A)->grid.cols;
-        } else if(dplasmaUpperLower == uplo) {
-            args->grid_rows = ((parsec_matrix_block_cyclic_t *)A)->grid.rows;
-            args->grid_cols = ((parsec_matrix_block_cyclic_t *)A)->grid.cols;
+        if((dplasmaUpper == uplo) ||
+           (dplasmaLower == uplo) ||
+           (dplasmaUpperLower == uplo)) {
+            if(0 != dplasma_aux_get_2d_grid(A, &args->grid_rows,
+                                            &args->grid_cols, NULL, NULL,
+                                            NULL, NULL)) {
+                dplasma_error("dplasma_advise_data_on_device", "illegal type of descriptor for A");
+            }
         } else {
             dplasma_error("dplasma_advise_data_on_device", "illegal value of uplo");
         }
