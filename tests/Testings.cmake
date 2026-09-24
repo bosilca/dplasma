@@ -296,6 +296,18 @@ if( MPI_C_FOUND )
         dplasma_add_test(potrf potrf_1gpu 2gpu_cuda_mpi:${PROCS} -N 4600 -t 320 ${OPTIONS} -g 2 -P 2 -- --mca device_cuda_memory_number_of_blocks 4096)
         dplasma_add_test(gemm  gemm       2gpu_cuda_mpi:${PROCS} -N 1940 -t 320 ${OPTIONS} -g 2 -P 2 -- --mca device_cuda_memory_number_of_blocks 4096)
         dplasma_add_test(gemm  gemm       2gpu_cuda_lowmem_mpi:${PROCS} -N 1940 -t 320 ${OPTIONS} -g 2 -P 2 -- --mca device_cuda_memory_number_of_blocks 21)
+
+        # Diagnostics for the intermittent dpotrf_2gpu_cuda_mpi failure, to be
+        # removed once it is understood. These repeat the runs above with MPI
+        # forbidden from moving data in and out of GPU memory, so every payload
+        # goes through a host copy. PaRSEC enables that path by default but only
+        # supports it with one process per GPU, and these tests give all four
+        # ranks every GPU on the node. Each run is paired with the unmodified one
+        # above so a single job compares them on the same machine, which the
+        # failure rate is too low and too erratic to do across jobs.
+        dplasma_add_test(potrf potrf      1gpu_cuda_hostcomm_mpi:${PROCS} -N 3200 -t 320 ${OPTIONS} -g 1 -P 2 -- --mca device_cuda_memory_number_of_blocks 4096 --mca mpi_gpu_aware 0)
+        dplasma_add_test(potrf potrf_1gpu 2gpu_cuda_hostcomm_mpi:${PROCS} -N 4600 -t 320 ${OPTIONS} -g 2 -P 2 -- --mca device_cuda_memory_number_of_blocks 4096 --mca mpi_gpu_aware 0)
+        dplasma_add_test(gemm  gemm       2gpu_cuda_hostcomm_mpi:${PROCS} -N 1940 -t 320 ${OPTIONS} -g 2 -P 2 -- --mca device_cuda_memory_number_of_blocks 4096 --mca mpi_gpu_aware 0)
     endif (DPLASMA_HAVE_CUDA AND MPI_C_FOUND)
     if (DPLASMA_HAVE_HIP AND MPI_C_FOUND)
         dplasma_add_test(potrf potrf      1gpu_hip_mpi:${PROCS} -N 3200 -t 320 ${OPTIONS} -g 1 -P 2 -- --mca device_hip_memory_number_of_blocks 4096)
