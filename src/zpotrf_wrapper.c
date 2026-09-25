@@ -64,7 +64,8 @@ static void *zpotrf_create_cuda_workspace(void *obj, void *user)
     cusolverStatus_t status;
     parsec_zpotrf_U_taskpool_t *tp = (parsec_zpotrf_U_taskpool_t*)user;
     dplasma_potrf_gpu_workspaces_t *wp = NULL;
-    void *tmpmem;
+    void *tmpmem, *host_buffer;
+    size_t host_size;
     int workspace_size;
     int mb = tp->_g_descA->mb;
     int nb = tp->_g_descA->nb;
@@ -89,14 +90,31 @@ static void *zpotrf_create_cuda_workspace(void *obj, void *user)
      * legitimately be saturated by data copies, and it is only drained by tasks
      * completing, so a task that needs scratch to run must not depend on it. */
     if( PARSEC_SUCCESS != gpu_device->memory_allocate(gpu_device,
-                                                      workspace_size * elt_size + sizeof(int),
+                                                      workspace_size * elt_size,
                                                       &tmpmem) )
         return NULL;
+
+    /* cuSOLVER needs its status argument to be device accessible, but not device
+     * resident: a mapped allocation lets the GPU write the panel status straight into
+     * host memory, so there is no copy to enqueue on the stream and no host pointer to
+     * synchronize on. Copying into the user's INFO instead would be a device to host
+     * transfer into pageable memory, which blocks the calling thread until the stream
+     * drains. One slot per panel keeps a later successful panel from erasing an earlier
+     * failure; zpotrf_destroy_cuda_workspace folds them into INFO. */
+    host_size = (size_t)(dplasmaUpper == uplo ? tp->_g_descA->nt : tp->_g_descA->mt) * sizeof(int);
+    if( cudaSuccess != cudaHostAlloc(&host_buffer, host_size, cudaHostAllocMapped) ) {
+        gpu_device->memory_free(gpu_device, tmpmem);
+        return NULL;
+    }
+    memset(host_buffer, 0, host_size);
 
     wp = (dplasma_potrf_gpu_workspaces_t*)malloc(sizeof(dplasma_potrf_gpu_workspaces_t));
     wp->tmpmem = tmpmem;
     wp->lwork = workspace_size;
     wp->gpu_device = gpu_device;
+    wp->params = tp;
+    wp->host_size = host_size;
+    wp->host_buffer = host_buffer;
 
     return wp;
 }
@@ -105,6 +123,24 @@ static void zpotrf_destroy_cuda_workspace(void *_ws, void *_n)
 {
     dplasma_potrf_gpu_workspaces_t *ws = (dplasma_potrf_gpu_workspaces_t*)_ws;
     parsec_device_gpu_module_t *gpu_device = (parsec_device_gpu_module_t*)ws->gpu_device;
+    parsec_zpotrf_U_taskpool_t *tp = (parsec_zpotrf_U_taskpool_t*)ws->params;
+    int *panel_info = (int*)ws->host_buffer;
+    int nb_panels = (int)(ws->host_size / sizeof(int));
+    int panel_stride = (dplasmaUpper == tp->_g_uplo) ? tp->_g_descA->nb : tp->_g_descA->mb;
+
+    /* Every device holds the statuses of the panels it ran, and the destructors run in
+     * an arbitrary order, so report the smallest failing k rather than letting the last
+     * destructor win. Scanning upwards, the first non-zero entry is this device's
+     * smallest. The value matches the CPU body, a row index into the whole matrix. */
+    for( int k = 0; k < nb_panels; k++ ) {
+        if( 0 == panel_info[k] ) continue;
+        int candidate = k * panel_stride + panel_info[k];
+        if( 0 == *tp->_g_INFO || candidate < *tp->_g_INFO )
+            *tp->_g_INFO = candidate;
+        break;
+    }
+
+    cudaFreeHost(ws->host_buffer);
     gpu_device->memory_free(gpu_device, ws->tmpmem);
     free(ws);
     (void)_n;
@@ -128,6 +164,11 @@ static void *zpotrf_create_hip_workspace(void *obj, void *user)
     wp->tmpmem = tmpmem;
     wp->lwork = 0;
     wp->gpu_device = gpu_device;
+    /* rocSOLVER still writes its status into device memory and nobody reads it back;
+     * see zpotrf_destroy_cuda_workspace for what the CUDA path does instead. */
+    wp->params = NULL;
+    wp->host_size = 0;
+    wp->host_buffer = NULL;
 
     return wp;
 }

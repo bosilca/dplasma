@@ -133,7 +133,10 @@ BODY [type=CUDA]
     if( NULL == wp ) return PARSEC_HOOK_RETURN_AGAIN;
 
     workspace = (cuDoubleComplex*)wp->tmpmem;
-    d_iinfo   = (int*)(wp->tmpmem + wp->lwork * sizeof(cuDoubleComplex));
+    /* Mapped host memory, so cuSOLVER writes the status of this panel where the host
+     * can read it without a copy. One slot per k; folded into INFO when the workspace
+     * is destroyed, which happens in Destruct before dplasma_zpotrf reads it. */
+    d_iinfo   = &((int*)wp->host_buffer)[k];
 
     status = cusolverDnZpotrf( handles->cusolverDn_handle, dplasma_cublas_fill(uplo), tempkm, T, ldak, workspace, wp->lwork, d_iinfo);
     PARSEC_CUDA_CHECK_ERROR( "cublasZpotrf_v2 ", status, {return PARSEC_HOOK_RETURN_ERROR;} );
