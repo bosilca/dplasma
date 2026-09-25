@@ -80,6 +80,11 @@ static void *zpotrf_create_cuda_workspace(void *obj, void *user)
 
     cusolverDnDestroy(cusolverDnHandle);
 
+    /* One scratch per device is on purpose, even though the cuSOLVER handle that
+     * consumes it is per stream: potrf_zpotrf(k) reads T from potrf_zherk(k-1, k), so a
+     * taskpool never has two panel factorizations in flight, and each taskpool registers
+     * its own info key. Concurrent streams therefore cannot collide here. Should that
+     * chain ever be relaxed, this has to become a per-stream info instead. */
     /* The scratch is allocated outside the zone PaRSEC manages for tiles. The zone can
      * legitimately be saturated by data copies, and it is only drained by tasks
      * completing, so a task that needs scratch to run must not depend on it. */
@@ -114,7 +119,8 @@ static void *zpotrf_create_hip_workspace(void *obj, void *user)
     void *tmpmem;
     (void)user;
 
-    /* See zpotrf_create_cuda_workspace for why this bypasses the tile zone. */
+    /* See zpotrf_create_cuda_workspace for why this bypasses the tile zone and why a
+     * single scratch per device is enough. */
     if( PARSEC_SUCCESS != gpu_device->memory_allocate(gpu_device, sizeof(int), &tmpmem) )
         return NULL;
 
