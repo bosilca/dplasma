@@ -34,7 +34,8 @@ import shutil;
 from os import path;
 from optparse import OptionParser,OptionGroup;
 from datetime import datetime;
-from Conversion import KEYWORD,DONE_KEYWORD,REGEX,EXTS,Conversion,check_gen;
+import Conversion as conversion_module;
+from Conversion import KEYWORD,DONE_KEYWORD,REGEX,EXTS,Conversion,check_gen,hidden,valid_extension;
 
 def main():
   """Create option parser, set static variables of the converter and manage printing options/order."""
@@ -68,6 +69,8 @@ def main():
   """If file extensions are specified, override defaults."""
   if options.fileexts:
     EXTS = options.fileexts.split();
+    """valid_extension() resolves EXTS in its own module, so override it there too."""
+    conversion_module.EXTS = EXTS;
 
   """Fill the 'work' array with files found to be operable."""
   if options.fileslst:
@@ -78,7 +81,8 @@ def main():
     """Begin directory walking in the current directory."""
     startDir = '.';
     for root, dirs, files in os.walk(startDir, True, None):
-      dirs  = list(filter(hidden,dirs));
+      """Prune in place, otherwise os.walk still descends into hidden directories."""
+      dirs[:] = list(filter(hidden,dirs));
       files = list(filter(hidden,files));
       files = list(filter(valid_extension,files));
       for file in files:
